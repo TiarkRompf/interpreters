@@ -14,7 +14,7 @@ We want other artifacts, too:
 - Fast interpreters
 - Static analyzers
 - Optimizing compilers
-
+b
 We also want a variety of languages. N x M problem?
 
 
@@ -119,7 +119,7 @@ Map the interpreter to code describing each of its actions:
 	    	s"${exec(b)}; ${eval(c) }}""
     }
 
-Removing dispatch overhead, but no
+Removing dispatch overhead, but no optimizations.
 
 A Simple Static Analyzer
 ========================
