@@ -29,15 +29,15 @@ object Test {
     case Plus(a,b)   => eval(a) + eval(b)
     case Times(a,b)  => eval(a) * eval(b)
     case Ref(a)      => assert(store.contains(a)); store(a)
-    }
-    def exec(s: Stm): Unit = s match {
-      case Assign(a,b) => store(a) = eval(b)
-      case Block(as)   => as.foreach(exec)
-      case If(c,a,b)   => if (eval(c) != 0) exec(a) else exec(b)
-      case While(c,b)  => while (eval(c) != 0) exec(b)
-    }
-    def run(p: Prog, x: Int): Int = p match {
-      case Prog(a,b,c) => store.clear; store(a) = x; exec(b); eval(c)
-    }
+  }
+  def exec(s: Stm): Unit = s match {
+    case Assign(a,b) => store(a) = eval(b)
+    case Block(as)   => as.foreach(exec)
+    case If(c,a,b)   => if (eval(c) != 0) exec(a) else exec(b)
+    case While(c,b)  => while (eval(c) != 0) exec(b)
+  }
+  def run(p: Prog, x: Int): Int = p match {
+    case Prog(a,b,c) => store.clear; store(a) = x; exec(b); eval(c)
+  }
 
 }
