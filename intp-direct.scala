@@ -18,7 +18,20 @@ object Test {
   case class If(c: Exp, a: Stm, b: Stm) extends Stm      //   if (e) s else s
   case class While(c: Exp, b: Stm) extends Stm           //   while (e) b
 
-  case class Prog(a: String, b: Stm, c: Exp)             // p ::= x := input; s*; return e
+  case class Prog(a: String, b: Stm, c: Exp)             // p ::= x := input; s; return e
+
+
+  // example programs
+
+  // fac(n) = n * fac(n-1)
+  val fac = Prog("n",Block(List(                         // n := input
+    Assign("r",Lit(1)),                                  // r := 1
+    While(Ref("n"),Block(List(                           // while (n) {
+      Assign("r",Times(Ref("r"),Ref("n"))),              //   r := r * n
+      Assign("n",Plus(Ref("n"),Lit(-1)))                 //   n := n - 1
+    ))))),                                               // }
+    Ref("r")                                             // return r
+  )
 
 
   // definitional interpreter
@@ -38,6 +51,13 @@ object Test {
   }
   def run(p: Prog, x: Int): Int = p match {
     case Prog(a,b,c) => store.clear; store(a) = x; exec(b); eval(c)
+  }
+
+
+  // tests
+
+  def main(args: Array[String]): Unit = {
+    assert(run(fac,4) == 24)
   }
 
 }
