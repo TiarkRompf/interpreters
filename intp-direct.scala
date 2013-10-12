@@ -55,19 +55,66 @@ trait DirectInterpreter extends Syntax {
     case If(c,a,b)   => if (eval(c) != 0) exec(a) else exec(b)
     case While(c,b)  => while (eval(c) != 0) exec(b)
   }
-  def run(p: Prog, x: Int): Int = p match {
+  def run(p: Prog)(x: Int): Int = p match {
     case Prog(a,b,c) => store.clear; store(a) = x; exec(b); eval(c)
   }
 
 }
 
 
-object Test extends DirectInterpreter with Examples {
+object TestDirectInterpreter extends DirectInterpreter with Examples {
 
   // tests
 
   def main(args: Array[String]): Unit = {
-    assert(run(fac,4) == 24)
+    assert(run(fac)(4) == 24)
+  }
+
+}
+
+
+trait DirectCompiler extends Syntax {
+
+  // simple compiler
+
+  val preamble = s"val store = new HashMap[String,Int]"
+  def eval(e: Exp): String = e match {
+    case Lit(c)      => s"$c"
+    case Plus(a,b)   => s"(${ eval(a) } + ${ eval(b) }"
+    case Times(a,b)  => s"(${ eval(a) } * ${ eval(b) }"
+    case Ref(a)      => s"{ assert(store.contains($a)); store($a) }"
+  }
+  def exec(s: Stm): String = s match {
+    case Assign(a,b) => s"store($a) = ${ eval(b) }"
+    case Block(as)   => s"{\n${ as.map(exec).mkString("\n") }\n}"
+    case If(c,a,b)   => s"if (${ eval(c) } != 0) ${ exec(a) } else ${ exec(b) }"
+    case While(c,b)  => s"while (${ eval(c) } != 0) ${ exec(b) }"
+  }
+  def run(p: Prog): String = p match {
+    case Prog(a,b,c) => s"def main($a: Int): Int = {\nval store = new HashMap[String,Int]\nstore($a) = x\n${ exec(b) }\n${ eval(c) }"
+  }
+
+}
+
+
+object TestDirectCompiler extends DirectCompiler with Examples {
+
+  // tests
+
+  def main(args: Array[String]): Unit = {
+    println(run(fac))
+    assert(run(fac) == 
+"""def main(n: Int): Int = {
+val store = new HashMap[String,Int]
+store(n) = x
+{
+store(r) = 1
+while ({ assert(store.contains(n)); store(n) } != 0) {
+store(r) = ({ assert(store.contains(r)); store(r) } * { assert(store.contains(n)); store(n) }
+store(n) = ({ assert(store.contains(n)); store(n) } + -1
+}
+}
+{ assert(store.contains(r)); store(r) }""")
   }
 
 }
