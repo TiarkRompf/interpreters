@@ -77,7 +77,6 @@ trait DirectCompiler extends Syntax {
 
   // simple compiler
 
-  val preamble = s"val store = new HashMap[String,Int]"
   def eval(e: Exp): String = e match {
     case Lit(c)      => s"$c"
     case Plus(a,b)   => s"(${ eval(a) } + ${ eval(b) }"
@@ -115,6 +114,40 @@ store(n) = ({ assert(store.contains(n)); store(n) } + -1
 }
 }
 { assert(store.contains(r)); store(r) }""")
+  }
+
+}
+
+trait IdentityTransform extends Syntax {
+
+  // identity transform
+
+  def eval(e: Exp): Exp = e match {
+    case Lit(c)      => Lit(c)
+    case Plus(a,b)   => Plus(eval(a),eval(b))
+    case Times(a,b)  => Times(eval(a),eval(b))
+    case Ref(a)      => Ref(a)
+  }
+  def exec(s: Stm): Stm = s match {
+    case Assign(a,b) => Assign(a,eval(b))
+    case Block(as)   => Block(as.map(exec))
+    case If(c,a,b)   => If(eval(c),exec(a),exec(b))
+    case While(c,b)  => While(eval(c),exec(b))
+  }
+  def run(p: Prog): Prog = p match {
+    case Prog(a,b,c) => Prog(a,exec(b),eval(c))
+  }
+
+}
+
+
+object TestIdentityTransform extends IdentityTransform with Examples {
+
+  // tests
+
+  def main(args: Array[String]): Unit = {
+    println(run(fac))
+    assert(run(fac) == fac)
   }
 
 }
