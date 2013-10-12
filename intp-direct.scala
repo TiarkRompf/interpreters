@@ -227,7 +227,39 @@ object TestAbstractDirectInterpreter extends AbstractInterpreter with AbstractDi
 
 }
 
-trait AbstractIdentityTransformer extends AbstractSyntax {
+trait AbstractTransformer extends AbstractSyntax {
 
+  val next: AbstractSyntax
+
+  def preV(a:Val): next.Val
+  def postV(a:next.Val): Val
+
+  def preC(a:Control): next.Control
+  def postC(a:next.Control): Control
+
+  def postP(a:next.Program): Program
+
+
+  def lit(c: Int): Val = postV(next.lit(c))
+  def plus(a: Val, b: Val): Val = postV(next.plus(preV(a),preV(b)))
+  def times(a: Val, b: Val): Val = postV(next.times(preV(a),preV(b)))
+  def ref(a: String) = postV(next.ref(a))
+
+  def assign(a: String, b: Val): Control = postC(next.assign(a,preV(b)))
+  def block(as: List[Control]): Control = postC(next.block(as.map(preC)))
+  def if_(c: Val, a: => Control, b: => Control): Control = postC(next.if_(preV(c),preC(a),preC(b)))
+  def while_(c: => Val, b: => Control): Control = postC(next.while_(preV(c),preC(b)))
+
+  def prog(a: String, b: =>Control, c: =>Val) = postP(next.prog(a,preC(b),preV(c)))
+
+}
+
+object TestAbstractDirectInterpreter2 extends AbstractInterpreter with AbstractDirectInterpreter with Examples {
+
+  // tests
+
+  def main(args: Array[String]): Unit = {
+    assert(run(fac)(4) == 24)
+  }
 
 }
