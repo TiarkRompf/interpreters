@@ -69,7 +69,6 @@ object TestDirectInterpreter extends DirectInterpreter with Examples {
   def main(args: Array[String]): Unit = {
     assert(run(fac)(4) == 24)
   }
-
 }
 
 
@@ -149,5 +148,86 @@ object TestIdentityTransform extends IdentityTransform with Examples {
     println(run(fac))
     assert(run(fac) == fac)
   }
+
+}
+
+
+trait AbstractSyntax {
+
+  // language syntax
+
+  type Val
+  def lit(c: Int): Val
+  def plus(a: Val, b: Val): Val
+  def times(a: Val, b: Val): Val
+  def ref(a: String): Val
+
+  type Control
+  def assign(a: String, b: Val): Control
+  def block(as: List[Control]): Control
+  def if_(c: Val, a: => Control, b: => Control): Control
+  def while_(c: => Val, b: => Control): Control
+
+  type Program
+  def prog(a: String, b: =>Control, c: =>Val): Program
+
+}
+
+trait AbstractInterpreter extends Syntax with AbstractSyntax {
+
+  // definitional abstract interpreter
+
+  def eval(e: Exp): Val = e match {
+    case Lit(c)      => lit(c)
+    case Plus(a,b)   => plus(eval(a),eval(b))
+    case Times(a,b)  => times(eval(a),eval(b))
+    case Ref(a)      => ref(a)
+  }
+  def exec(s: Stm): Control = s match {
+    case Assign(a,b) => assign(a,eval(b))
+    case Block(as)   => block(as.map(exec))
+    case If(c,a,b)   => if_(eval(c),exec(a),exec(b))
+    case While(c,b)  => while_(eval(c),exec(b))
+  }
+  def run(p: Prog): Program = p match {
+    case Prog(a,b,c) => prog(a,exec(b),eval(c))
+  }
+
+}
+
+trait AbstractDirectInterpreter extends AbstractSyntax {
+  
+  val store = new HashMap[String,Int]
+
+  type Val = Int
+  def lit(c: Int): Int = c
+  def plus(a: Int, b: Int): Int = a + b
+  def times(a: Int, b: Int): Int = a * b
+  def ref(a: String) = { assert(store.contains(a)); store(a) }
+
+  type Control = Unit
+  def assign(a: String, b: Int): Unit = store(a) = b
+  def block(as: List[Unit]): Unit = () 
+  def if_(c: Int, a: => Unit, b: => Unit): Unit = if (c != 0) a else b
+  def while_(c: => Int, b: => Unit): Unit = while (c != 0) b
+
+  type Program = Int => Int
+  def prog(a: String, b: =>Unit, c: =>Int) = { x:Int => 
+    store.clear; store(a) = x; b; c
+  }
+}
+
+object TestAbstractDirectInterpreter extends AbstractInterpreter with AbstractDirectInterpreter with Examples {
+
+  // tests
+
+  def main(args: Array[String]): Unit = {
+    assert(run(fac)(4) == 24)
+  }
+
+}
+
+trait AbstractIdentityTransformer extends AbstractSyntax {
+
 
 }
