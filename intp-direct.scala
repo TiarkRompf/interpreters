@@ -2,7 +2,7 @@ package intp.direct
 
 import scala.collection.mutable.HashMap
 
-object Test {
+trait Syntax {
 
   // language syntax
 
@@ -20,6 +20,9 @@ object Test {
 
   case class Prog(a: String, b: Stm, c: Exp)             // p ::= x := input; s; return e
 
+}
+
+trait Examples extends Syntax {
 
   // example programs
 
@@ -33,6 +36,9 @@ object Test {
     Ref("r")                                             // return r
   )
 
+}
+
+trait DirectInterpreter extends Syntax {
 
   // definitional interpreter
 
@@ -53,6 +59,10 @@ object Test {
     case Prog(a,b,c) => store.clear; store(a) = x; exec(b); eval(c)
   }
 
+}
+
+
+object Test extends DirectInterpreter with Examples {
 
   // tests
 
