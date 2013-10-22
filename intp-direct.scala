@@ -164,7 +164,7 @@ trait AbstractSyntax {
 
   type Control
   def assign(a: String, b: Val): Control
-  def block(as: List[Unit => Control]): Control
+  def block(as: List[() => Control]): Control
   def if_(c: Val, a: => Control, b: => Control): Control
   def while_(c: => Val, b: => Control): Control
 
@@ -185,7 +185,7 @@ trait AbstractInterpreter extends Syntax with AbstractSyntax {
   }
   def exec(s: Stm): Control = s match {
     case Assign(a,b) => assign(a,eval(b))
-    case Block(as)   => block(as.map(st => ((tt: Unit) => exec(st))))
+    case Block(as)   => block(as.map(st => (() => exec(st))))
     case If(c,a,b)   => if_(eval(c),exec(a),exec(b))
     case While(c,b)  => while_(eval(c),exec(b))
   }
@@ -197,7 +197,7 @@ trait AbstractInterpreter extends Syntax with AbstractSyntax {
 
 trait AbstractDirectInterpreter extends AbstractSyntax {
 
-  private val store = new HashMap[String,Int] // let's hide it from successors
+  val store = new HashMap[String,Int] // let's hide it from successors (made it public again for tracing)
 
   type Val = Int
   def lit(c: Int): Val = c
@@ -207,7 +207,7 @@ trait AbstractDirectInterpreter extends AbstractSyntax {
 
   type Control = Unit
   def assign(a: String, b: Int): Unit = store(a) = b
-  def block(as: List[Unit => Unit]): Unit = as.map(_.apply())
+  def block(as: List[() => Unit]): Unit = as.map(_.apply())
   def if_(c: Val, a: => Unit, b: => Unit): Unit = if (c != 0) a else b
   def while_(c: => Int, b: => Unit): Unit = while (c != 0) b
 
@@ -226,6 +226,54 @@ object TestAbstractDirectInterpreter extends AbstractInterpreter with AbstractDi
   }
 
 }
+
+
+trait AbstractLabellingInterpreter extends AbstractDirectInterpreter {
+
+  abstract class Context
+  case object Root extends Context
+  case class InBlock(n: Int, up: Context) extends Context
+  case class InThen(up: Context) extends Context
+  case class InElse(up: Context) extends Context
+  case class InLoop(up: Context) extends Context
+
+  var ctx: Context = Root
+  def inContext[A](f: Context => Context)(b: => A) = {
+    val save = ctx
+    ctx = f(ctx)
+    try b finally ctx = save
+  }
+
+  override def block(as: List[() => Control]): Control =
+    super.block(as.zipWithIndex map { case (f,i) => () => inContext(InBlock(i,_))(f()) })
+  override def if_(c: Val, a: => Control, b: => Control): Control = 
+    super.if_(c, inContext(InThen)(a), inContext(InElse)(b))
+  override def while_(c: => Val, b: => Control): Control = 
+    super.while_(c, inContext(InLoop)(b))
+
+  override def prog(a: String, b: =>Control, c: =>Val): Program =
+    super.prog(a, inContext(_ => Root)(b), c)
+
+}
+
+
+trait AbstractTracingInterpreter extends AbstractLabellingInterpreter {
+
+  override def inContext[A](f: Context => Context)(b: => A) = 
+    super.inContext(f) { println(s"pp: $ctx".padTo(50,' ') + s"store: $store"); b }
+
+}
+
+object TestAbstractTracingInterpreter extends AbstractInterpreter with AbstractTracingInterpreter with Examples {
+
+  def main(args: Array[String]): Unit = {
+    assert(run(fac)(4) == 24)
+  }
+
+}
+
+
+
 
 trait AbstractCollectingInterpreter extends AbstractSyntax {
 
@@ -286,7 +334,7 @@ trait AbstractCollectingInterpreter extends AbstractSyntax {
   type Control = Unit
   def assign(a: String, b: Val): Control = upd(a, b) // update the store
   def if_(c: Val, a: => Control, b: => Control): Control = for (x <- c; isZ <- x.isZero) { if (isZ) a else b }
-  def block(as: List[Unit => Control]): Control = as.map(_.apply())
+  def block(as: List[() => Control]): Control = as.map(_.apply())
 
   def while_(c: => Val, b: => Control): Control = { // computing a fixpoint
     val snapshot1: Set[(String, Val)] = store.toMap.toSet // immutable
@@ -337,7 +385,7 @@ trait AbstractTransformer extends AbstractSyntax {
   def ref(a: String) = postV(next.ref(a))
 
   def assign(a: String, b: Val): Control = postC(next.assign(a,preV(b)))
-  def block(as: List[Unit => Control]): Control = postC(next.block(as.map(st => ((tt: Unit) => preC(st())))))
+  def block(as: List[() => Control]): Control = postC(next.block(as.map(st => (() => preC(st())))))
   def if_(c: Val, a: => Control, b: => Control): Control = postC(next.if_(preV(c),preC(a),preC(b)))
   def while_(c: => Val, b: => Control): Control = postC(next.while_(preV(c),preC(b)))
 
