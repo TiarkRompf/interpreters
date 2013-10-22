@@ -241,39 +241,39 @@ object TestAbstractDirectInterpreter extends AbstractInterpreter with AbstractDi
 }
 
 
-trait AbstractLabellingInterpreter extends AbstractDirectInterpreter {
+trait AbstractLabellingInterpreter extends AbstractSyntax {
 
-  abstract class Context
-  case object Root extends Context
-  case class InBlock(n: Int, up: Context) extends Context
-  case class InThen(up: Context) extends Context
-  case class InElse(up: Context) extends Context
-  case class InLoop(up: Context) extends Context
+  abstract class Layer
+  case object Root extends Layer
+  case class InBlock(n: Int, up: Layer) extends Layer
+  case class InThen(up: Layer) extends Layer
+  case class InElse(up: Layer) extends Layer
+  case class InLoop(up: Layer) extends Layer
+  case class InAsgn(x: String, up: Layer) extends Layer
 
-  var ctx: Context = Root
-  def inContext[A](f: Context => Context)(b: => A) = {
-    val save = ctx
-    ctx = f(ctx)
-    try b finally ctx = save
+  var layer: Layer = Root
+  def inLayer[A](f: Layer => Layer)(b: => A) = {
+    val save = layer
+    layer = f(layer)
+    try b finally layer = save
   }
-
-  override def block(as: List[() => Control]): Control =
-    super.block(as.zipWithIndex map { case (f,i) => () => inContext(InBlock(i,_))(f()) })
-  override def if_(c: Val, a: => Control, b: => Control): Control = 
-    super.if_(c, inContext(InThen)(a), inContext(InElse)(b))
-  override def while_(c: => Val, b: => Control): Control = 
-    super.while_(c, inContext(InLoop)(b))
-
-  override def prog(a: String, b: =>Control, c: =>Val): Program =
-    super.prog(a, inContext(_ => Root)(b), c)
 
 }
 
+trait AbstractTracingInterpreter extends AbstractDirectInterpreter with AbstractLabellingInterpreter {
 
-trait AbstractTracingInterpreter extends AbstractLabellingInterpreter {
+  override def inLayer[A](f: Layer => Layer)(b: => A) = 
+    super.inLayer(f) { println(s"pp: $layer".padTo(50,' ') + s"store: $store"); b }
 
-  override def inContext[A](f: Context => Context)(b: => A) = 
-    super.inContext(f) { println(s"pp: $ctx".padTo(50,' ') + s"store: $store"); b }
+  override def block(as: List[() => Control]): Control =
+    super.block(as.zipWithIndex map { case (f,i) => () => inLayer(InBlock(i,_))(f()) })
+  override def if_(c: Val, a: => Control, b: => Control): Control =
+    super.if_(c, inLayer(InThen)(a), inLayer(InElse)(b))
+  override def while_(c: => Val, b: => Control): Control =
+    super.while_(c, inLayer(InLoop)(b))
+
+  override def prog(a: String, b: =>Control, c: =>Val): Program =
+    super.prog(a, inLayer(_ => Root)(b), c)
 
 }
 
@@ -293,20 +293,13 @@ object TestAbstractTracingInterpreter extends AbstractInterpreter with AbstractT
 
 }*/
 
-trait AbstractCollectingInterpreter extends AbstractSyntax {
-
+trait AbstractCollectingInterpreter extends AbstractLabellingInterpreter  {
   import mutable.{Map=> MMap, Set => MSet, HashMap}
 
-  // Ilya: Can the following two be self-references, not values?
+  // Ilya: Can the following guy be self-references, not valuee?
   val concrete : AbstractDirectInterpreter
-  val numThreshold: concrete.Val
 
-  // State representation
-//  sealed abstract class ControlState
-//  case class AsgnState(a: String, b: concrete.Val) extends ControlState
-//  case class IfState(c: concrete.Val, tb: ControlState, eb: ControlState) extends ControlState
-//  case class WhileState(c: concrete.Val, b: ControlState) extends ControlState
-//  case class BlockState(sx: List[ControlState]) extends ControlState
+  val numThreshold: concrete.Val
 
   // Abstract values are sets
   sealed abstract class AbsNum {
@@ -321,7 +314,7 @@ trait AbstractCollectingInterpreter extends AbstractSyntax {
       case (Num(n1), Num(n2)) => alpha1(concrete.times(n1, n2))
     }
     def isZero: MSet[Boolean] = this match {
-      case Num(0) => MSet(true)
+      case Num(0)          => MSet(true)
       case BeyondThreshold => MSet(true, false)
       case _ => MSet(false)
     }
@@ -329,15 +322,33 @@ trait AbstractCollectingInterpreter extends AbstractSyntax {
   case class Num(n: concrete.Val) extends AbsNum
   case object BeyondThreshold extends AbsNum
 
-  // Implicit conversion concrete -> abstract
-  implicit def alpha1(x: concrete.Val): AbsNum = if (Math.abs(x) < numThreshold) Num(x) else BeyondThreshold
+  // Primitive abstraction concrete -> abstract
+  def alpha1(x: concrete.Val): AbsNum = if (Math.abs(x) < numThreshold) Num(x) else BeyondThreshold
 
   type Val = MSet[AbsNum]
-  def alpha(x: concrete.Val): Val = MSet(x) // singleton abstraction
+  def alpha(x: concrete.Val): Val = MSet(alpha1(x)) // singleton abstraction
 
-  val store: MMap[String, Val] = new HashMap[String, Val] // abstract store
-//  val stateSet: MSet[ControlState] = new HashSet[ControlState]
-  def upd(k: String, v: Val) { store.put(k, store.getOrElse(k, MSet.empty) ++ v) } // weak update the abstract store
+  type Context = List[InAsgn]
+  var ctx: Context = List()
+
+  type Addr = (String, Context)
+
+  val store: MMap[Addr, Val] = new HashMap[Addr, Val] // abstract store
+
+  private def tick(x: String) {
+    // TODO: implement ticking -- updating the context for the lates assignment of `x`
+  }
+
+  private def upd(k: String, v: Val) { // weak update the abstract store
+    tick(k)  // update the context
+    val addr = (k, ctx)
+    store.put(addr, store.getOrElse(addr, MSet.empty) ++ v)
+  }
+
+  private def lookup(k: String): Val = {
+    val addr = (k, ctx)
+    assert(store.contains(addr)); store(addr)
+  }
 
   // Abstract evaluation of expressions
   //TODO: This implementation *sucks*, as it doesn't account for context sensitivity
@@ -345,8 +356,7 @@ trait AbstractCollectingInterpreter extends AbstractSyntax {
   def lit(c: Int): Val = alpha(concrete.lit(c))
   def plus(a: Val, b: Val): Val = for (x <- a; y <- b) yield x + y
   def times(a: Val, b: Val): Val = for (x <- a; y <- b) yield x * y
-  //TODO: This *needs* context-sensitivity
-  def ref(a: String): Val = { assert(store.contains(a)); store(a) } // Ilya: Should it still assert? Probably, yes.
+  def ref(a: String): Val = lookup(a)
 
   // Abstract computation of statements
   type Control = Unit
@@ -355,13 +365,13 @@ trait AbstractCollectingInterpreter extends AbstractSyntax {
   def block(as: List[() => Control]): Control = as.map(_.apply())
 
   def while_(c: => Val, b: => Control): Control = { // computing a fixpoint
-    val snapshot1: Set[(String, Val)] = store.toMap.toSet // immutable
+    val snapshot1 = store.toSet // immutable
     for (x <- c; isZ <- x.isZero) if (!isZ) b
-    val snapshot2: Set[(String, Val)] = store.toMap.toSet
+    val snapshot2 = store.toSet
     if (!snapshot2.subsetOf(snapshot1)) while_(c, b)
   }
 
-  type Program = concrete.Val => (Val, MMap[String, Val])
+  type Program = concrete.Val => (Val, MMap[Addr, Val])
   def prog(a: String, b: =>Control, c: =>Val): Program = { x: concrete.Val =>
     store.clear(); upd(a, alpha(x)); b
     (c, store)
@@ -379,7 +389,7 @@ object TestAbstractCollectingInterpreter extends AbstractInterpreter with Abstra
       val concrRes = concrete.run(concrete.fac)(4)
       val (absRes, absMap) = run(fac)(4)
       // safety condition
-      assert(absRes.contains(concrRes))
+      assert(absRes.contains(alpha1(concrRes)))
     }
 
 }
