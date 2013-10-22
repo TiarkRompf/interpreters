@@ -140,7 +140,6 @@ trait IdentityTransform extends Syntax {
 
 }
 
-
 object TestIdentityTransform extends IdentityTransform with Examples {
 
   // tests
@@ -165,7 +164,7 @@ trait AbstractSyntax {
 
   type Control
   def assign(a: String, b: Val): Control
-  def block(as: List[Unit => Control]): Control // statement are not executed, hence (Unit => ...)
+  def block(as: List[Unit => Control]): Control
   def if_(c: Val, a: => Control, b: => Control): Control
   def while_(c: => Val, b: => Control): Control
 
@@ -186,7 +185,7 @@ trait AbstractInterpreter extends Syntax with AbstractSyntax {
   }
   def exec(s: Stm): Control = s match {
     case Assign(a,b) => assign(a,eval(b))
-    case Block(as)   => block(as.map((s: Stm) => ((tt: Unit) => exec(s))))
+    case Block(as)   => block(as.map(st => ((tt: Unit) => exec(st))))
     case If(c,a,b)   => if_(eval(c),exec(a),exec(b))
     case While(c,b)  => while_(eval(c),exec(b))
   }
@@ -208,7 +207,7 @@ trait AbstractDirectInterpreter extends AbstractSyntax {
 
   type Control = Unit
   def assign(a: String, b: Int): Unit = store(a) = b
-  def block(as: List[Unit => Unit]): Unit = ()
+  def block(as: List[Unit => Unit]): Unit = as.map(_.apply())
   def if_(c: Val, a: => Unit, b: => Unit): Unit = if (c != 0) a else b
   def while_(c: => Int, b: => Unit): Unit = while (c != 0) b
 
@@ -218,60 +217,17 @@ trait AbstractDirectInterpreter extends AbstractSyntax {
   }
 }
 
-trait AbstractCollectingInterpreter extends AbstractSyntax {
+object TestAbstractDirectInterpreter extends AbstractInterpreter with AbstractDirectInterpreter with Examples {
 
-  import mutable.{Map=> MMap, HashMap, HashSet, Set => MSet}
+  // tests
 
-  // Ilya: Can the following two be self-references, not values?
-  val concrete : AbstractDirectInterpreter
-
-  // State representation
-  sealed abstract class ControlState
-  case class AsgnState(a: String, b: concrete.Val) extends ControlState
-  case class IfState(c: concrete.Val, tb: ControlState, eb: ControlState) extends ControlState
-  case class WhileState(c: concrete.Val, b: ControlState) extends ControlState
-  case class BlockState(sx: List[ControlState]) extends ControlState
-
-
-  // Abstract values are sets
-  type Val = MSet[concrete.Val]
-  val store: MMap[String, Val] = new HashMap[String, Val] // abstract store
-  val stateSet: MSet[ControlState] = new HashSet[ControlState]
-  def alpha(x: concrete.Val): Val = MSet(x) // singleton abstraction
-  def upd(k: String, v: Val) { store.put(k, store.getOrElse(k, MSet.empty) ++ v) } // weak update the abstract store
-
-  // Abstract evaluation of expressions
-    // TODO: Abstract over this monadic for-comprehensions, too
-  def lit(c: Int): Val = alpha(concrete.lit(c))
-  def plus(a: Val, b: Val): Val = for (x <- a; y <- b) yield concrete.plus(x, y)
-  def times(a: Val, b: Val): Val = for (x <- a; y <- b) yield concrete.times(x, y)
-  def ref(a: String): Val = { assert(store.contains(a)); store(a) } // Ilya: Should it still assert? Probably, yes.
-
-  // Abstract computation of statements
-  // Control need to account for visited States
-  type Control = MSet[ControlState]
-
-  def assign(a: String, b: Val): Control = {
-    upd(a, b) // update the store
-    for (x <- b) yield {
-      // ??? A cheap-and-cheerful way to record visited states.
-      // However, it's not compositional in the present setting, see below.
-      val st = AsgnState(a, x); stateSet += st; st
-    }
+  def main(args: Array[String]): Unit = {
+    assert(run(fac)(4) == 24)
   }
-
-  /*
-  def if_(c: Val, a: => Control, b: => Control): Control = {
-    for (x <- c) {
-      // ??? Ilya: What now? Need some sort for labeling to account for statements
-      if (x != 0) a.flatMap(s => ... ) else { ... }
-    }
-  }
-  */
 
 }
 
-object TestAbstractDirectInterpreter extends AbstractInterpreter with AbstractDirectInterpreter with Examples {
+object TestAbstractDirectInterpreter2 extends AbstractInterpreter with AbstractDirectInterpreter with Examples {
 
   // tests
 
@@ -300,7 +256,7 @@ trait AbstractTransformer extends AbstractSyntax {
   def ref(a: String) = postV(next.ref(a))
 
   def assign(a: String, b: Val): Control = postC(next.assign(a,preV(b)))
-  def block(as: List[Unit => Control]): Control = postC(next.block(as.map(c => ((tt: Unit) => preC(c(tt))))))
+  def block(as: List[Unit => Control]): Control = postC(next.block(as.map(st => ((tt: Unit) => preC(st())))))
   def if_(c: Val, a: => Control, b: => Control): Control = postC(next.if_(preV(c),preC(a),preC(b)))
   def while_(c: => Val, b: => Control): Control = postC(next.while_(preV(c),preC(b)))
 
@@ -308,12 +264,47 @@ trait AbstractTransformer extends AbstractSyntax {
 
 }
 
-object TestAbstractDirectInterpreter2 extends AbstractInterpreter with AbstractDirectInterpreter with Examples {
+trait AbstractCollectingInterpreter extends AbstractSyntax {
 
-  // tests
+  import mutable.{Map=> MMap, HashMap, HashSet, Set => MSet}
 
-  def main(args: Array[String]): Unit = {
-    assert(run(fac)(4) == 24)
+  // Ilya: Can the following two be self-references, not values?
+  val concrete : AbstractDirectInterpreter
+
+  // State representation
+//  sealed abstract class ControlState
+//  case class AsgnState(a: String, b: concrete.Val) extends ControlState
+//  case class IfState(c: concrete.Val, tb: ControlState, eb: ControlState) extends ControlState
+//  case class WhileState(c: concrete.Val, b: ControlState) extends ControlState
+//  case class BlockState(sx: List[ControlState]) extends ControlState
+
+
+  // Abstract values are sets
+  type Val = MSet[concrete.Val]
+  val store: MMap[String, Val] = new HashMap[String, Val] // abstract store
+//  val stateSet: MSet[ControlState] = new HashSet[ControlState]
+  def alpha(x: concrete.Val): Val = MSet(x) // singleton abstraction
+  def upd(k: String, v: Val) { store.put(k, store.getOrElse(k, MSet.empty) ++ v) } // weak update the abstract store
+
+  // Abstract evaluation of expressions
+    // TODO: Abstract over this monadic for-comprehensions, too
+  def lit(c: Int): Val = alpha(concrete.lit(c))
+  def plus(a: Val, b: Val): Val = for (x <- a; y <- b) yield concrete.plus(x, y)
+  def times(a: Val, b: Val): Val = for (x <- a; y <- b) yield concrete.times(x, y)
+  def ref(a: String): Val = { assert(store.contains(a)); store(a) } // Ilya: Should it still assert? Probably, yes.
+
+  // Abstract computation of statements
+  // Control need to account for visited States
+  type Control = Unit
+
+  def assign(a: String, b: Val): Control = {
+    upd(a, b) // update the store
   }
+
+  def if_(c: Val, a: => Control, b: => Control): Control = {
+    for (x <- c) { if (x != 0) a else b }
+  }
+
+//  def block(as: List[Unit]): Unit = ()
 
 }
