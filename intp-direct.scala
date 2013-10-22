@@ -37,6 +37,19 @@ trait Examples extends Syntax {
     Ref("r")                                             // return r
   )
 
+  // Simple looping program
+  val loop = Prog("n",Block(List(                        // n := input
+    Assign("r",Lit(5)),                                  // r := 5
+    Assign("s",Lit(3)),                                  // s := 3
+    While(Ref("n"),Block(List(                           // while (n) {
+      If(Ref("s"),                                       //   if (s)
+        Block(List(Assign("r",Times(Ref("r"),Ref("s"))), //   then r := r * s
+              Assign("s",Plus(Ref("s"),Lit(-1))))),      //        s := s - 1
+        Block(List()))                                   //   else skip
+    ))))),                                               // }
+    Ref("r")                                             // return r
+  )
+
 }
 
 trait DirectInterpreter extends Syntax {
@@ -272,8 +285,13 @@ object TestAbstractTracingInterpreter extends AbstractInterpreter with AbstractT
 
 }
 
+/*object TestAbstractTracingInterpreter2 extends AbstractInterpreter with AbstractTracingInterpreter with Examples {
 
+  def main(args: Array[String]): Unit = {
+    println(run(loop)(4))
+  }
 
+}*/
 
 trait AbstractCollectingInterpreter extends AbstractSyntax {
 
@@ -333,7 +351,7 @@ trait AbstractCollectingInterpreter extends AbstractSyntax {
   // Abstract computation of statements
   type Control = Unit
   def assign(a: String, b: Val): Control = upd(a, b) // update the store
-  def if_(c: Val, a: => Control, b: => Control): Control = for (x <- c; isZ <- x.isZero) { if (isZ) a else b }
+  def if_(c: Val, a: => Control, b: => Control): Control = for (x <- c; isZ <- x.isZero) { if (!isZ) a else b }
   def block(as: List[() => Control]): Control = as.map(_.apply())
 
   def while_(c: => Val, b: => Control): Control = { // computing a fixpoint
@@ -364,7 +382,23 @@ object TestAbstractCollectingInterpreter extends AbstractInterpreter with Abstra
       assert(absRes.contains(concrRes))
     }
 
-  }
+}
+
+
+object TestAbstractCollectingInterpreter2 extends AbstractInterpreter with AbstractCollectingInterpreter with Examples {
+
+    val concrete = TestAbstractDirectInterpreter
+    val numThreshold = 256
+
+    // tests
+    def main(args: Array[String]): Unit = {
+      val (absRes, absMap) = run(loop)(5)
+      // safety condition
+      println(absMap)
+    }
+
+}
+
 
 trait AbstractTransformer extends AbstractSyntax {
 
