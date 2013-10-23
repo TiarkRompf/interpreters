@@ -63,7 +63,7 @@ trait Examples extends Syntax {
   // example programs
 
   // fac(n) = n * fac(n-1)
-  val fac = prog[Int,Int] { n =>
+  def fac = prog[Int,Int] { n =>
     app(fix[Int,Int] { f => lam { n => ifnz(n, times(n,app(f,plus(n,nat(-1)))), nat(1)) } }, n)
   }
 
@@ -117,7 +117,7 @@ trait Labeling extends LabeledSyntax {
 
   def exp[A](b: => Rep[A]) = inLabel(InExp)(b)
 
-  abstract override def nat(c: Int): Rep[Int]                     = exp(super.nat(c))
+  //abstract override def nat(c: Int): Rep[Int]                     = exp(super.nat(c))
   abstract override def plus(x: Rep[Int], y: Rep[Int]): Rep[Int]  = exp(super.plus(x,y))
   abstract override def times(x: Rep[Int], y: Rep[Int]): Rep[Int] = exp(super.times(x,y))
   abstract override def app[A,B](f: Rep[A=>B], x: Rep[A]): Rep[B] = exp(super.app(f,x))
@@ -136,7 +136,7 @@ trait Labeling extends LabeledSyntax {
   }
 
   type Prog[A,B]
-  abstract override def prog[A,B](f: Rep[A] => Rep[B]): Prog[A,B] = super.prog(f)
+  abstract override def prog[A,B](f: Rep[A] => Rep[B]): Prog[A,B] = super.prog(x => inLabel(_ => Root)(f(x)))
 }
 
 
@@ -160,4 +160,54 @@ object TestTracingInterpreter extends DirectInterpreter with Tracing with Exampl
 }
 
 
+
+object TestANFCompiler extends DirectCompiler with Labeling with Examples {
+
+  var code: List[String] = Nil
+
+  override def exp[A](b: => Rep[A]) = {
+    val i = code.length
+    code :+= s"val x$i = ${b}\n"
+    s"x$i"
+  }
+
+
+  override def inLabel[A](f: Label => Label)(b: => A) = 
+    super.inLabel(f) { 
+      val save = code
+      try {
+        code = Nil
+        var r = b
+        (s"{\n${code.mkString}$r\n}").asInstanceOf[A] // XX
+      } finally {
+        code = save
+      }
+    }
+
+  // tests
+
+  def main(args: Array[String]): Unit = {
+    println(fac)
+    assert(fac ==
+"""{
+val x0 = fix { f => {
+val x0 = lam { x => {
+val x0 = if (x != 0) {
+val x0 = x + -1
+val x1 = f(x0)
+val x2 = x * x1
+x2
+} else {
+1
+}
+x0
+} }
+x0
+} }
+val x1 = x0(x)
+x1
+}""")
+  }
+
+}
 
