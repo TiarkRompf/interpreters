@@ -46,6 +46,8 @@ trait DirectCompiler extends Syntax {
   def times(a: String, b: String): String = s"$a * $b"
   def ifnz[T](c: String, a: =>String, b: =>String): String = s"if ($c != 0) $a else $b"
 
+  // note that bindings are not hygienic here! (need labels to assign unique vars)
+
   def lam[A,B](f: String => String): String = s"lam { x => ${f("x")} }"
   def app[A,B](f: String, x: String): String = s"$f($x)"
   def fix[A,B](f: String => String): String = s"fix { f => ${f("f")} }"
