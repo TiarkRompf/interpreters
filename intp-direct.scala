@@ -240,44 +240,50 @@ object TestAbstractDirectInterpreter extends AbstractInterpreter with AbstractDi
 
 }
 
+trait AbstractLabeledSyntax extends AbstractSyntax {
+  type Label
+  def label: Label
+}
 
-trait AbstractLabellingInterpreter extends AbstractSyntax {
+trait AbstractLabeling extends AbstractLabeledSyntax {
 
-  abstract class Layer
-  case object Root extends Layer
-  case class InBlock(n: Int, up: Layer) extends Layer
-  case class InThen(up: Layer) extends Layer
-  case class InElse(up: Layer) extends Layer
-  case class InLoop(up: Layer) extends Layer
-  case class InAsgn(x: String, up: Layer) extends Layer
+  abstract class Label
+  case object Root extends Label
+  case class InBlock(n: Int, up: Label) extends Label
+  case class InThen(up: Label) extends Label
+  case class InElse(up: Label) extends Label
+  case class InLoop(up: Label) extends Label
+  //case class InAsgn(x: String, up: Layer) extends Layer // assignments are atomic stms, so we can't rely be in one
 
-  var layer: Layer = Root
-  def inLayer[A](f: Layer => Layer)(b: => A) = {
-    val save = layer
-    layer = f(layer)
-    try b finally layer = save
+  var label: Label = Root
+  def inLabel[A](f: Label => Label)(b: => A) = {
+    val save = label
+    label = f(label)
+    try b finally label = save
   }
 
-}
+  abstract override def block(as: List[() => Control]): Control =
+    super.block(as.zipWithIndex map { case (f,i) => () => inLabel(InBlock(i,_))(f()) })
+  abstract override def if_(c: Val, a: => Control, b: => Control): Control =
+    super.if_(c, inLabel(InThen)(a), inLabel(InElse)(b))
+  abstract override def while_(c: => Val, b: => Control): Control =
+    super.while_(c, inLabel(InLoop)(b))
 
-trait AbstractTracingInterpreter extends AbstractDirectInterpreter with AbstractLabellingInterpreter {
-
-  override def inLayer[A](f: Layer => Layer)(b: => A) = 
-    super.inLayer(f) { println(s"pp: $layer".padTo(50,' ') + s"store: $store"); b }
-
-  override def block(as: List[() => Control]): Control =
-    super.block(as.zipWithIndex map { case (f,i) => () => inLayer(InBlock(i,_))(f()) })
-  override def if_(c: Val, a: => Control, b: => Control): Control =
-    super.if_(c, inLayer(InThen)(a), inLayer(InElse)(b))
-  override def while_(c: => Val, b: => Control): Control =
-    super.while_(c, inLayer(InLoop)(b))
-
-  override def prog(a: String, b: =>Control, c: =>Val): Program =
-    super.prog(a, inLayer(_ => Root)(b), c)
+  abstract override def prog(a: String, b: =>Control, c: =>Val): Program =
+    super.prog(a, inLabel(_ => Root)(b), c)
 
 }
 
-object TestAbstractTracingInterpreter extends AbstractInterpreter with AbstractTracingInterpreter with Examples {
+trait AbstractTracing extends AbstractLabeling {
+
+  def store: Any
+
+  override def inLabel[A](f: Label => Label)(b: => A) = 
+    super.inLabel(f) { println(s"pp: $label".padTo(50,' ') + s"state: $store"); b }
+
+}
+
+object TestAbstractTracingInterpreter extends AbstractInterpreter with AbstractDirectInterpreter with AbstractTracing with Examples {
 
   def main(args: Array[String]): Unit = {
     assert(run(fac)(4) == 24)
@@ -293,7 +299,7 @@ object TestAbstractTracingInterpreter extends AbstractInterpreter with AbstractT
 
 }*/
 
-trait AbstractCollectingInterpreter extends AbstractLabellingInterpreter  {
+trait AbstractCollectingInterpreter extends AbstractLabeledSyntax  {
   import mutable.{Map=> MMap, Set => MSet, HashMap}
 
   // Ilya: Can the following guy be self-references, not valuee?
@@ -328,7 +334,7 @@ trait AbstractCollectingInterpreter extends AbstractLabellingInterpreter  {
   type Val = MSet[AbsNum]
   def alpha(x: concrete.Val): Val = MSet(alpha1(x)) // singleton abstraction
 
-  type Context = List[InAsgn]
+  type Context = List[Label]
   var ctx: Context = List()
 
   type Addr = (String, Context)
@@ -365,6 +371,7 @@ trait AbstractCollectingInterpreter extends AbstractLabellingInterpreter  {
   def block(as: List[() => Control]): Control = as.map(_.apply())
 
   def while_(c: => Val, b: => Control): Control = { // computing a fixpoint
+    println(s"-- fixpoint iteration: $label") // TR: testing labels
     val snapshot1 = store.toSet // immutable
     for (x <- c; isZ <- x.isZero) if (!isZ) b
     val snapshot2 = store.toSet
@@ -379,7 +386,7 @@ trait AbstractCollectingInterpreter extends AbstractLabellingInterpreter  {
 
 }
 
-object TestAbstractCollectingInterpreter extends AbstractInterpreter with AbstractCollectingInterpreter with Examples {
+object TestAbstractCollectingInterpreter extends AbstractInterpreter with AbstractCollectingInterpreter with AbstractLabeling with Examples {
 
     val concrete = TestAbstractDirectInterpreter
     val numThreshold = 256
@@ -395,7 +402,7 @@ object TestAbstractCollectingInterpreter extends AbstractInterpreter with Abstra
 }
 
 
-object TestAbstractCollectingInterpreter2 extends AbstractInterpreter with AbstractCollectingInterpreter with Examples {
+object TestAbstractCollectingInterpreter2 extends AbstractInterpreter with AbstractCollectingInterpreter with AbstractLabeling with Examples {
 
     val concrete = TestAbstractDirectInterpreter
     val numThreshold = 256
