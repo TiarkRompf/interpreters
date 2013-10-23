@@ -46,11 +46,14 @@ trait DirectCompiler extends Syntax {
   def times(a: String, b: String): String = s"$a * $b"
   def ifnz[T](c: String, a: =>String, b: =>String): String = s"if ($c != 0) $a else $b"
 
-  // note that bindings are not hygienic here! (need labels to assign unique vars)
+  var nest = 0
+  def nesting(f: String => String)(x: String) = {
+    nest += 1; try f(x) finally nest -= 1
+  }
 
-  def lam[A,B](f: String => String): String = s"lam { x => ${f("x")} }"
+  def lam[A,B](f: String => String): String = s"lam { y$nest => ${ nesting(f)(s"y$nest")} }"
   def app[A,B](f: String, x: String): String = s"$f($x)"
-  def fix[A,B](f: String => String): String = s"fix { f => ${f("f")} }"
+  def fix[A,B](f: String => String): String = s"fix { f$nest => ${ nesting(f)(s"f$nest")} }"
 
   type Prog[A,B] = String
   def prog[A,B](f: String => String) = f("x")
@@ -86,7 +89,7 @@ object TestDirectCompiler extends DirectCompiler with Examples {
   def main(args: Array[String]): Unit = {
     println(fac)
     assert(fac ==
-"""fix { f => lam { x => if (x != 0) x * f(x + -1) else 1 } }(x)""")
+"""fix { f0 => lam { y1 => if (y1 != 0) y1 * f0(y1 + -1) else 1 } }(x)""")
   }
 
 }
@@ -109,34 +112,34 @@ trait Labeling extends LabeledSyntax {
   case class InFix(up: Label) extends Label
 
   var label: Label = Root
-  def inLabel[A](f: Label => Label)(b: => A) = {
+  def block[A](l: Label)(b: => A) = {
     val save = label
-    label = f(label)
+    label = l
     try b finally label = save
   }
 
-  def exp[A](b: => Rep[A]) = inLabel(InExp)(b)
+  def exp[A](b: => Rep[A]) = b
 
-  //abstract override def nat(c: Int): Rep[Int]                     = exp(super.nat(c))
+  abstract override def nat(c: Int): Rep[Int]                     = super.nat(c) // 'trivial' expression
   abstract override def plus(x: Rep[Int], y: Rep[Int]): Rep[Int]  = exp(super.plus(x,y))
   abstract override def times(x: Rep[Int], y: Rep[Int]): Rep[Int] = exp(super.times(x,y))
   abstract override def app[A,B](f: Rep[A=>B], x: Rep[A]): Rep[B] = exp(super.app(f,x))
 
   abstract override def ifnz[T](c: Rep[Int], a: =>Rep[T], b: =>Rep[T]): Rep[T] 
-    = exp(super.ifnz(c, inLabel(InThen)(a), inLabel(InElse)(b)))
+    = exp(super.ifnz(c, block(InThen(label))(a), block(InElse(label))(b)))
 
   abstract override def lam[A,B](f: Rep[A] => Rep[B]): Rep[A=>B] = {
     val static = label
-    exp(super.lam(x => inLabel(_ => InLam(static))(f(x))))
+    exp(super.lam(x => block(InLam(static))(f(x))))
   }
 
   abstract override def fix[A,B](f: Rep[A=>B] => Rep[A=>B]): Rep[A=>B] = {
     val static = label
-    exp(super.fix(x => inLabel(_ => InFix(static))(f(x))))
+    exp(super.fix(x => block(InFix(static))(f(x))))
   }
 
   type Prog[A,B]
-  abstract override def prog[A,B](f: Rep[A] => Rep[B]): Prog[A,B] = super.prog(x => inLabel(_ => Root)(f(x)))
+  abstract override def prog[A,B](f: Rep[A] => Rep[B]): Prog[A,B] = super.prog(x => block(Root)(f(x)))
 }
 
 
@@ -144,8 +147,8 @@ trait Tracing extends Labeling {
 
   def store: Any = "?"
 
-  override def inLabel[A](f: Label => Label)(b: => A) = 
-    super.inLabel(f) { println(s"pp: $label".padTo(50,' ') + s"state: $store"); b }
+  override def block[A](l: Label)(b: => A) = 
+    super.block(l) { println(s"pp: $label".padTo(50,' ') + s"state: $store"); b }
 
 }
 
@@ -172,8 +175,8 @@ object TestANFCompiler extends DirectCompiler with Labeling with Examples {
   }
 
 
-  override def inLabel[A](f: Label => Label)(b: => A) = 
-    super.inLabel(f) { 
+  override def block[A](l: Label)(b: => A) = 
+    super.block(l) { 
       val save = code
       try {
         code = Nil
@@ -190,12 +193,12 @@ object TestANFCompiler extends DirectCompiler with Labeling with Examples {
     println(fac)
     assert(fac ==
 """{
-val x0 = fix { f => {
-val x0 = lam { x => {
-val x0 = if (x != 0) {
-val x0 = x + -1
-val x1 = f(x0)
-val x2 = x * x1
+val x0 = fix { f0 => {
+val x0 = lam { y1 => {
+val x0 = if (y1 != 0) {
+val x0 = y1 + -1
+val x1 = f0(x0)
+val x2 = y1 * x1
 x2
 } else {
 1
