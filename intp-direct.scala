@@ -302,12 +302,12 @@ object TestAbstractTracingInterpreter extends AbstractInterpreter with AbstractD
 trait AbstractCollectingInterpreter extends AbstractLabeledSyntax  {
   import mutable.{Map=> MMap, Set => MSet, HashMap}
 
-  // Ilya: Can the following guy be self-references, not valuee?
+  // Ilya: Can the following guy be self-references, not value?
   val concrete : AbstractDirectInterpreter
 
   val numThreshold: concrete.Val
 
-  // Abstract values are sets
+  // Abstract numbers (bounded with a threshold)
   sealed abstract class AbsNum {
     def +(other: AbsNum): AbsNum = (this, other) match {
       case (_, BeyondThreshold) => BeyondThreshold
@@ -329,47 +329,63 @@ trait AbstractCollectingInterpreter extends AbstractLabeledSyntax  {
   case object BeyondThreshold extends AbsNum
 
   // Primitive abstraction concrete -> abstract
-  def alpha1(x: concrete.Val): AbsNum = if (Math.abs(x) < numThreshold) Num(x) else BeyondThreshold
-
   type Val = MSet[AbsNum]
+  def alpha1(x: concrete.Val): AbsNum = if (Math.abs(x) < numThreshold) Num(x) else BeyondThreshold
   def alpha(x: concrete.Val): Val = MSet(alpha1(x)) // singleton abstraction
 
-  type Context = List[Label]
-  var ctx: Context = List()
+  // Contexts and addresses
+  case class Asgn(l: Label, x: String)
+  type Context = Set[Asgn]
+  var ctx: Context = Set()
 
-  type Addr = (String, Context)
-
+  type Addr = (String, Asgn)
   val store: MMap[Addr, Val] = new HashMap[Addr, Val] // abstract store
 
-  private def tick(x: String) {
-    // TODO: implement ticking -- updating the context for the lates assignment of `x`
+  private def tick(x: String) { // update a context
+    ctx = (ctx.filter{case Asgn(_, y) => !y.equals(x)}) + Asgn(label, x)
   }
 
-  private def upd(k: String, v: Val) { // weak update the abstract store
-    tick(k)  // update the context
-    val addr = (k, ctx)
-    store.put(addr, store.getOrElse(addr, MSet.empty) ++ v)
-  }
-
-  private def lookup(k: String): Val = {
-    val addr = (k, ctx)
-    assert(store.contains(addr)); store(addr)
+  private def getAddr(x: String): Addr = ctx.find{case Asgn(l, y) => y == x} match {
+    case Some(a) => (x, a)
+    case None => assert(assertion = false, message = s"a recent context stamp is not found for the identifier $x"); null
   }
 
   // Abstract evaluation of expressions
-  //TODO: This implementation *sucks*, as it doesn't account for context sensitivity
-  // As a result, everything is coupled with everything (for the same variable)
   def lit(c: Int): Val = alpha(concrete.lit(c))
   def plus(a: Val, b: Val): Val = for (x <- a; y <- b) yield x + y
   def times(a: Val, b: Val): Val = for (x <- a; y <- b) yield x * y
-  def ref(a: String): Val = lookup(a)
+  def ref(x: String): Val = {
+    val addr = getAddr(x)
+    assert(store.contains(addr)); store(addr)
+  }
 
   // Abstract computation of statements
   type Control = Unit
-  def assign(a: String, b: Val): Control = upd(a, b) // update the store
+  def assign(x: String, v: Val): Control = {
+    tick(x)  // update the context
+    val addr = getAddr(x)
+    store.put(addr, store.getOrElse(addr, MSet.empty) ++ v)
+  }
   def if_(c: Val, a: => Control, b: => Control): Control = for (x <- c; isZ <- x.isZero) { if (!isZ) a else b }
   def block(as: List[() => Control]): Control = as.map(_.apply())
 
+
+  // Ilya: this is not particularly nice, as I had to refactor the nice recursive impelmentation
+  //       to support the runtime labelling scheme
+  def while_(c: => Val, b: => Control): Control = { // computing a fixpoint
+    // println(s"-- fixpoint iteration: $label") // TR: testing labels
+    var snapshot1 = store.toSet
+    for (x <- c; isZ <- x.isZero) if (!isZ) b
+    var snapshot2 = store.toSet
+    while (!snapshot2.subsetOf(snapshot1)) {
+      snapshot1 = snapshot2
+      for (x <- c; isZ <- x.isZero) if (!isZ) b
+      snapshot2 = store.toSet
+    }
+  }
+
+  // The old implementation of while-loops
+  /*
   def while_(c: => Val, b: => Control): Control = { // computing a fixpoint
     println(s"-- fixpoint iteration: $label") // TR: testing labels
     val snapshot1 = store.toSet // immutable
@@ -377,10 +393,11 @@ trait AbstractCollectingInterpreter extends AbstractLabeledSyntax  {
     val snapshot2 = store.toSet
     if (!snapshot2.subsetOf(snapshot1)) while_(c, b)
   }
+  */
 
   type Program = concrete.Val => (Val, MMap[Addr, Val])
   def prog(a: String, b: =>Control, c: =>Val): Program = { x: concrete.Val =>
-    store.clear(); upd(a, alpha(x)); b
+    store.clear(); assign(a, alpha(x)); b
     (c, store)
   }
 
@@ -397,6 +414,8 @@ object TestAbstractCollectingInterpreter extends AbstractInterpreter with Abstra
       val (absRes, absMap) = run(fac)(4)
       // safety condition
       assert(absRes.contains(alpha1(concrRes)))
+      // println(s"abstract map: $absMap")
+      // println(s"abstract result: $absRes")
     }
 
 }
