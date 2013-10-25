@@ -47,16 +47,16 @@ trait DirectCompiler extends Syntax {
   def ifnz[T](c: String, a: =>String, b: =>String): String = s"if ($c != 0) $a else $b"
 
   var nest = 0
-  def nesting(f: String => String)(x: String) = {
+  def nesting(f: String => String)(x: String) = { // XX should this produce { y => f(y) } directly?
     nest += 1; try f(x) finally nest -= 1
   }
 
   def lam[A,B](f: String => String): String = s"lam { y$nest => ${ nesting(f)(s"y$nest")} }"
   def app[A,B](f: String, x: String): String = s"$f($x)"
-  def fix[A,B](f: String => String): String = s"fix { f$nest => ${ nesting(f)(s"f$nest")} }"
+  def fix[A,B](f: String => String): String = s"fix { y$nest => ${ nesting(f)(s"y$nest")} }"
 
   type Prog[A,B] = String
-  def prog[A,B](f: String => String) = f("x")
+  def prog[A,B](f: String => String) = s"prog { y$nest => ${ nesting(f)(s"y$nest")} }"
 
 }
 
@@ -164,41 +164,49 @@ object TestTracingInterpreter extends DirectInterpreter with Tracing with Exampl
 
 
 
-object TestANFCompiler extends DirectCompiler with Labeling with Examples {
+
+
+trait ANFCompiler extends DirectCompiler with Labeling {
 
   var code: List[String] = Nil
+  var vars = 0
 
   override def exp[A](b: => Rep[A]) = {
-    val i = code.length
+    val i = vars
     code :+= s"val x$i = ${b}\n"
+    vars += 1
     s"x$i"
   }
 
 
   override def block[A](l: Label)(b: => A) = 
     super.block(l) { 
-      val save = code
+      val code0 = code
+      val vars0 = vars
       try {
         code = Nil
         var r = b
         (s"{\n${code.mkString}$r\n}").asInstanceOf[A] // XX
       } finally {
-        code = save
+        code = code0
+        vars = vars0
       }
     }
+}
 
+object TestANFCompiler extends ANFCompiler with Examples {
   // tests
 
   def main(args: Array[String]): Unit = {
     println(fac)
     assert(fac ==
-"""{
-val x0 = fix { f0 => {
-val x0 = lam { y1 => {
-val x0 = if (y1 != 0) {
-val x0 = y1 + -1
-val x1 = f0(x0)
-val x2 = y1 * x1
+"""prog { y0 => {
+val x0 = fix { y1 => {
+val x0 = lam { y2 => {
+val x0 = if (y2 != 0) {
+val x0 = y2 + -1
+val x1 = y1(x0)
+val x2 = y2 * x1
 x2
 } else {
 1
@@ -207,9 +215,76 @@ x0
 } }
 x0
 } }
-val x1 = x0(x)
+val x1 = x0(y0)
 x1
-}""")
+} }""")
+  }
+
+}
+
+
+
+
+trait LambdaLiftLCompiler extends DirectCompiler with Labeling {
+
+  var funs: List[String] = Nil
+
+  override def lam[A,B](f: String => String): String = {
+    val i = funs.length
+    val args = (0 until nest) map (i => s"y$i") mkString(",")
+    val static = label
+    val f1 = nesting(x => block(InLam(static))(f(x))) _
+    funs :+= s"def f$i($args)(y$nest) = ${ f1(s"y$nest")}\n"
+    //funs :+= s"def f$i($args) = ${super.lam(f)}"
+    exp(s"f$i($args)")
+  }
+
+  // TODO: fix
+
+  override def prog[A,B](f: String => String): String = {
+    funs = Nil
+    val r = super.prog(f)
+    s"${funs.mkString}$r"
+  }
+}
+
+object TestLambdaLiftLCompiler extends LambdaLiftLCompiler with Labeling with Examples {
+  // tests
+
+  def main(args: Array[String]): Unit = {    
+    println(fac)
+    assert(fac ==
+"""def f0(y0,y1)(y2) = if (y2 != 0) y2 * y1(y2 + -1) else 1
+prog { y0 => fix { y1 => f0(y0,y1) }(y0) }""")
+  }
+
+}
+
+object TestLLANFCompiler extends ANFCompiler with LambdaLiftLCompiler with Labeling with Examples {
+  // tests
+
+  def main(args: Array[String]): Unit = {
+    println(fac)
+    assert(fac ==
+"""def f0(y0,y1)(y2) = {
+val x0 = if (y2 != 0) {
+val x0 = y2 + -1
+val x1 = y1(x0)
+val x2 = y2 * x1
+x2
+} else {
+1
+}
+x0
+}
+prog { y0 => {
+val x0 = fix { y1 => {
+val x0 = f0(y0,y1)
+x0
+} }
+val x1 = x0(y0)
+x1
+} }""")
   }
 
 }
