@@ -36,6 +36,10 @@ instance (Abstract Int b, Additive b) => SymExpr GLattice b where
   int_ x = GEmbed $ abstract x
   plus_ = add
  
+class SymControl c h (p :: * -> *) (v :: * -> *) a b where
+  ifNonZero :: c (h p v a) b -> c (h p v a) () -> c (h p v a) () -> c (h p v a) ()
+  whileNonZero :: c (h p v a) b -> c (h p v a) () -> c (h p v a) ()
+
 class Heap h p v a where
   insert :: v a -> p a -> h p v a -> h p v a
   lookup :: v a -> h p v a -> Maybe (p a)
@@ -45,10 +49,6 @@ class Mutation m h p v a where
   newRef   :: String -> p a -> m (h p v a) (v a)
   readRef  :: v a -> m (h p v a) (p a)
   writeRef :: v a -> p a -> m (h p v a) ()
-
-class SymControl c h (p :: * -> *) (v :: * -> *) a b where
-  ifNonZero :: c (h p v a) b -> c (h p v a) () -> c (h p v a) () -> c (h p v a) ()
-  whileNonZero :: c (h p v a) b -> c (h p v a) () -> c (h p v a) ()
 
 class Runnable c h (p :: * -> *) (v :: * -> *) a where
   run :: c (h p v a) () -> h p v a
