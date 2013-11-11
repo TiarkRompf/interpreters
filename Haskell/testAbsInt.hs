@@ -1,6 +1,6 @@
 {-# LANGUAGE MultiParamTypeClasses, NoMonomorphismRestriction, 
-             StandaloneDeriving, FlexibleInstances,
-             FlexibleContexts
+             FlexibleInstances, KindSignatures, StandaloneDeriving,
+             FlexibleContexts, UndecidableInstances
              #-}
 module Main where
 
@@ -9,7 +9,7 @@ module Main where
 
 import Prelude hiding (lookup)
 import qualified Data.Map as Map
-import Control.Monad (liftM2, unless)
+-- import Control.Monad (liftM2, unless)
 import Control.Applicative ((<$>))
 import Control.Monad.Identity
 import qualified Control.Monad.Trans.State as S
@@ -17,80 +17,12 @@ import Data.Maybe (fromJust)
 import Data.Bits ((.&.))
 import Data.Char (ord)
 
--- Lower Lattice (no top)
-class LowerLattice l where
-  bottom :: l
-  lub :: l -> l -> l
-
--- Complete Lattices
-class LowerLattice l => CLattice l where
-  top :: l
-
-leq :: (Eq l, LowerLattice l) => l -> l -> Bool
-leq a b = a `lub` b == b
-
--- a flat lattice from a 'flat domain'
--- the domain restriction will be enforced on the instances
-data FlatLattice d = Bottom | Top | Embed d
-deriving instance Eq d => Eq (FlatLattice d)
-
--- for sharing purposes, we take the 'core' of a lattice as input 
--- for a general lattice; no domain constraint
-data GLattice d = GBottom | GTop | GEmbed d
-deriving instance Eq d => Eq (GLattice d)
-
-flatlub :: (Domain d, Eq d) => FlatLattice d -> FlatLattice d -> FlatLattice d
-flatlub Bottom b = b
-flatlub a Bottom = a
-flatlub (Embed a) (Embed b) | a == b = Embed a
-flatlub _ _ = Top
-
-liftFL2 :: (d -> d -> d) -> FlatLattice d -> FlatLattice d -> FlatLattice d
-liftFL2 f (Embed a) (Embed b) = Embed (f a b)
-liftFL2 _ Bottom a = a
-liftFL2 _ a Bottom = a
-liftFL2 _ _ _ = Top
-
-instance Show d => Show (FlatLattice d) where
-  show Bottom    = "Bottom"
-  show Top       = "Top"
-  show (Embed d) = show d
-
-instance Show d => Show (GLattice d) where
-  show GBottom    = "Bottom"
-  show GTop       = "Top"
-  show (GEmbed d) = show d
-
-glub :: Eq d => GLattice d -> GLattice d -> GLattice d
-glub GBottom b = b
-glub a GBottom = a
-glub (GEmbed a) (GEmbed b) | a == b = GEmbed a
-glub _ _ = GTop
-
-liftGL2 :: (d -> d -> d) -> GLattice d -> GLattice d -> GLattice d
-liftGL2 f (GEmbed a) (GEmbed b) = GEmbed (f a b)
-liftGL2 _ GBottom a = a
-liftGL2 _ a GBottom = a
-liftGL2 _ _ _ = GTop
+import Lattice
 
 -- an class with no methods, just to allow us to declare domains
 class Domain d where
 instance Domain Int
 instance Domain Bool
-
-instance (Domain d, Eq d) => LowerLattice (FlatLattice d) where
-  bottom = Bottom
-  lub = flatlub
-
-instance (Domain d, Eq d) => CLattice (FlatLattice d) where
-  top = Top
-
-instance Eq d => LowerLattice (GLattice d) where
-  bottom = GBottom
-  lub = glub
-
-instance Eq d => CLattice (GLattice d) where
-  top = GTop
 
 --    Sign
 data Sign = Neg | Zero | Pos deriving (Eq, Show)
@@ -170,7 +102,7 @@ instance Abstract Int NSign where
   abstract x | x < 0     = NSNeg
              | otherwise = NSPos
    
-class Abstract Int a => Additive a where
+class Additive a where
     add :: a -> a -> a
 
 instance Additive Sign where
@@ -196,34 +128,33 @@ maybeNonZero = \a -> not (a `leq` (abstract (0::Int)))
 
 maybeZero :: (Eq b, Abstract Int b, LowerLattice b) => b -> Bool
 maybeZero = \a -> zero `leq` a
-  where zero :: Abstract Int b => b
-        zero = abstract (0::Int)
+  where zero = abstract (0::Int)
            
 -- The core components under our language, in tagless style
-class SymExpr prep where
-  int_ :: Abstract Int b => Int -> prep b
-  plus_ :: Additive b => prep b -> prep b -> prep b
+class SymExpr prep b where
+  int_ :: Int -> prep b
+  plus_ :: prep b -> prep b -> prep b
 
-class SymVar vrep where
+class SymVar vrep a where
   s_ :: String -> vrep a
 
-class Heap h where
-  insert :: Ord (v a) => v a -> p a -> h p v a -> h p v a
-  lookup :: Ord (v a) => v a -> h p v a -> Maybe (p a)
+class Heap h p v a where
+  insert :: v a -> p a -> h p v a -> h p v a
+  lookup :: v a -> h p v a -> Maybe (p a)
   empty :: h p v a
 
-instance SymExpr FlatLattice where
+instance (Abstract Int b, Additive b) => SymExpr FlatLattice b where
   int_ x = Embed $ abstract x
   plus_ = add
  
-instance SymExpr GLattice where
+instance (Abstract Int b, Additive b) => SymExpr GLattice b where
   int_ x = GEmbed $ abstract x
   plus_ = add
  
-class Heap h => Mutation m h p v a where
-  newRef   :: (SymVar v, Ord (v a)) => String -> p a -> m (h p v a) (v a)
-  readRef  :: (Ord (v a)) => v a -> m (h p v a) (p a)
-  writeRef :: (Ord (v a)) => v a -> p a -> m (h p v a) ()
+class Mutation m h p v a where
+  newRef   :: String -> p a -> m (h p v a) (v a)
+  readRef  :: v a -> m (h p v a) (p a)
+  writeRef :: v a -> p a -> m (h p v a) ()
 
 newtype ST s a = ST (S.State s a)
 unST (ST x) = x
@@ -232,22 +163,22 @@ instance Monad (ST s) where
   return = ST . return
   (ST m) >>= k = ST $ m >>= unST . k
 
-instance Heap h => Mutation ST h p v a where
+instance (Heap h p v a, SymVar v a) => Mutation ST h p v a where
   newRef nm l = ST $ do S.modify $ insert (s_ nm) l
                         return $ s_ nm
   readRef vr = ST $ fromJust . lookup vr <$> S.get
   writeRef vr l = ST $ S.modify $ insert vr l
 
-class SymControl c where
-  ifNonZero :: (Heap h, Abstract Int b,  Eq b, LowerLattice b,
-    Ord (v a), LowerLattice (h p v a)) =>
-      c (h p v a) b -> c (h p v a) () -> c (h p v a) () -> c (h p v a) ()
-  whileNonZero :: (Heap h, Ord (v a), CLattice (p a), Eq (h p v a), 
-    Abstract Int b, CLattice b, Eq b, LowerLattice (h p v a)) =>
-      c (h p v a) b -> c (h p v a) () -> c (h p v a) ()
-  run :: Heap h => c (h p v a) b -> h p v a
+class SymControl c h (p :: * -> *) (v :: * -> *) a b where
+  ifNonZero :: c (h p v a) b -> c (h p v a) () -> c (h p v a) () -> c (h p v a) ()
+  whileNonZero :: c (h p v a) b -> c (h p v a) () -> c (h p v a) ()
 
-instance SymControl ST where
+class Runnable c h (p :: * -> *) (v :: * -> *) a where
+  run :: c (h p v a) () -> h p v a
+
+instance (LowerLattice b, Eq b, Heap h p v a, LowerLattice (h p v a),
+  Eq (h p v a), Abstract Int b) 
+    => SymControl ST h p v a b where
   ifNonZero cond statTrue statFalse = ST $
     do c <- unST cond
        s <- S.get
@@ -261,10 +192,13 @@ instance SymControl ST where
        st1 <- S.get
        unless (st1 == st0) (unST $ whileNonZero cond body)
 
+instance (Heap h p v a) => Runnable ST h p v a where
   run (ST body) = S.execState body empty
     
 -- The explicit ST below forces a number of the instances above to be chosen
-program :: (Heap h) => ST (h p v a) b -> h p v a
+program :: (Heap h p v a, Abstract Int a, LowerLattice (h p v a),
+  Eq (h p v a))
+  => ST (h p v a) () -> h p v a
 program body = run body
        
 -- An actual instance to test with
@@ -272,7 +206,7 @@ newtype Var a = V String deriving (Ord, Eq)
 instance Show (Var a) where
   show (V x) = x
 
-instance SymVar Var where
+instance SymVar Var a where
   s_ = V
 
 -- Another
@@ -280,7 +214,7 @@ newtype IVar a = IV Int deriving (Ord, Eq)
 instance Show (IVar a) where
   show (IV x) = show x
 
-instance SymVar IVar where
+instance SymVar IVar a where
   s_ s = IV (foldr (\c n -> n*2^8 + ord c) 0 s)
 
 data MapHeap p v a = H { unH :: Map.Map (v a) (p a) }
@@ -289,17 +223,19 @@ deriving instance (Eq a, Eq (v a), Eq (p a)) => Eq (MapHeap p v a)
 instance (Show (p a), Show (v a)) => Show (MapHeap p v a) where
   show (H x) = show x
 
-instance Heap MapHeap where
+instance Ord (v a) => Heap MapHeap p v a where
   insert v r h = H $ Map.insert v r (unH h)
   lookup v h = Map.lookup v (unH h)
   empty = H $ Map.empty
 
-instance (Eq a, Ord (v a), LowerLattice (p a)) => LowerLattice (MapHeap p v a) where
+instance Ord (v a) => LowerBounded (MapHeap p v a) where
   bottom = empty
+
+instance (Eq a, Ord (v a), LowerLattice (p a)) => LowerLattice (MapHeap p v a) where
   lub s1 s2 = H $ Map.foldrWithKey (Map.insertWith lub) (unH s1) (unH s2)
 
 -- These combinators are even more useful to make 'real' programs 
-int :: (Heap h, SymExpr p, Abstract Int b) => 
+int :: (Heap h p v a, SymExpr p b, Abstract Int b) => 
        Int -> ST (h p v a) (p b)
 int = return . int_
 
@@ -310,9 +246,9 @@ writeVar nm vl = writeRef nm =<< vl
 
 -- type signatures needed because programs are so polymorphic!
 prog1 :: (Eq b, Abstract Int b, Additive b,
-  SymVar v, Ord (v b),
-  Heap h, LowerLattice (h p v b), Eq (h p v b),
-  Abstract Int (p b), CLattice (p b), Eq (p b), SymExpr p) => h p v b
+  SymVar v b, Ord (v b), LowerLattice (p b),
+  Heap h p v b, LowerLattice (h p v b), Eq (h p v b),
+  Abstract Int (p b), Eq (p b), SymExpr p b) => h p v b
 prog1 = program (
   do 
     c <- newVar "c" (int 0)
@@ -320,9 +256,9 @@ prog1 = program (
       writeVar c (plus (readVar c) (int 1)) ) )
   
 prog2 :: (Eq b, Abstract Int b, Additive b,
-  SymVar v, Ord (v b),
-  Heap h, LowerLattice (h p v b), Eq (h p v b),
-  Abstract Int (p b), CLattice (p b), Eq (p b), SymExpr p) => h p v b
+  SymVar v b, Ord (v b), LowerLattice (p b),
+  Heap h p v b, LowerLattice (h p v b), Eq (h p v b),
+  Abstract Int (p b), Eq (p b), SymExpr p b) => h p v b
 prog2 = program (
   do 
     c <- newVar "c" (int 0)
@@ -331,13 +267,13 @@ prog2 = program (
   where
     -- the signature is needed because Haskell correctly infers that 
     -- this constant can live somewhere else than the global ones
-    const1 :: (Abstract Int b0, SymExpr p0, Heap h0) => ST (h0 p0 v0 b0) (p0 b0)
+    const1 :: (Abstract Int b0, SymExpr p0 b0, Heap h0 p0 v0 b0) => ST (h0 p0 v0 b0) (p0 b0)
     const1 = int 1
   
 prog3 :: (Abstract Int b,
-  SymVar v, Ord (v b),
-  Heap h, LowerLattice (h p v b),
-  Abstract Int (p b), LowerLattice (p b), Eq (p b), SymExpr p) => 
+  SymVar v b, Ord (v b),
+  Heap h p v b, LowerLattice (h p v b), Eq (h p v b),
+  Abstract Int (p b), LowerLattice (p b), Eq (p b), SymExpr p b) => 
   Int -> h p v b
 prog3 = \n -> program (
   do 
