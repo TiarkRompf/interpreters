@@ -14,79 +14,12 @@ import Control.Applicative ((<$>))
 import Control.Monad.Identity
 import qualified Control.Monad.Trans.State as S
 import Data.Maybe (fromJust)
-import Data.Bits ((.&.))
 import Data.Char (ord)
 
 import Lattice
 import Domains
+import Abstract
 
--- For 'Abstract' interpretation 
--- b is an abstraction of values of a
-class Abstract a b where
-    abstract :: a -> b
-
-instance Abstract Int Sign where
-  abstract 0 = Zero
-  abstract x | x < 0     = Neg
-             | otherwise = Pos
-
-instance Abstract Int Parity where
-  abstract x = if x .&. 1 == 0 then Even else Odd
-
--- no abstraction at all
-instance Abstract a a where
-  abstract x = x
-
-instance Abstract a b => Abstract (FlatLattice a) (FlatLattice b) where
-  abstract Bottom = Bottom
-  abstract Top    = Top
-  abstract (Embed x) = Embed (abstract x)
-
-instance Abstract a b => Abstract (GLattice a) (GLattice b) where
-  abstract GBottom    = GBottom
-  abstract GTop       = GTop
-  abstract (GEmbed x) = GEmbed (abstract x)
-
-instance Abstract Int a => Abstract Int (FlatLattice a) where
-   abstract x = Embed (abstract x)
-
-instance Abstract Int a => Abstract Int (GLattice a) where
-   abstract x = GEmbed (abstract x)
-
--- actually the same as for Sign
-instance Abstract Int NSign where
-  abstract 0 = NSZero
-  abstract x | x < 0     = NSNeg
-             | otherwise = NSPos
-   
-class Additive a where
-    add :: a -> a -> a
-
-instance Additive Sign where
-    add = splus 
-
-instance Additive Parity where
-    add = pplus
-
-instance Additive Int where
-    add = (+)
-
-instance Additive NSign where
-    add = nsplus
-
-instance Additive a => Additive (FlatLattice a) where
-    add = liftFL2 add
-
-instance Additive a => Additive (GLattice a) where
-    add = liftGL2 add
-
-maybeNonZero :: (Eq b, Abstract Int b, LowerLattice b) => b -> Bool
-maybeNonZero = \a -> not (a `leq` (abstract (0::Int)))
-
-maybeZero :: (Eq b, Abstract Int b, LowerLattice b) => b -> Bool
-maybeZero = \a -> zero `leq` a
-  where zero = abstract (0::Int)
-           
 -- The core components under our language, in tagless style
 class SymExpr prep b where
   int_ :: Int -> prep b
@@ -94,11 +27,6 @@ class SymExpr prep b where
 
 class SymVar vrep a where
   s_ :: String -> vrep a
-
-class Heap h p v a where
-  insert :: v a -> p a -> h p v a -> h p v a
-  lookup :: v a -> h p v a -> Maybe (p a)
-  empty :: h p v a
 
 instance (Abstract Int b, Additive b) => SymExpr FlatLattice b where
   int_ x = Embed $ abstract x
@@ -108,10 +36,22 @@ instance (Abstract Int b, Additive b) => SymExpr GLattice b where
   int_ x = GEmbed $ abstract x
   plus_ = add
  
+class Heap h p v a where
+  insert :: v a -> p a -> h p v a -> h p v a
+  lookup :: v a -> h p v a -> Maybe (p a)
+  empty :: h p v a
+
 class Mutation m h p v a where
   newRef   :: String -> p a -> m (h p v a) (v a)
   readRef  :: v a -> m (h p v a) (p a)
   writeRef :: v a -> p a -> m (h p v a) ()
+
+class SymControl c h (p :: * -> *) (v :: * -> *) a b where
+  ifNonZero :: c (h p v a) b -> c (h p v a) () -> c (h p v a) () -> c (h p v a) ()
+  whileNonZero :: c (h p v a) b -> c (h p v a) () -> c (h p v a) ()
+
+class Runnable c h (p :: * -> *) (v :: * -> *) a where
+  run :: c (h p v a) () -> h p v a
 
 newtype ST s a = ST (S.State s a)
 unST (ST x) = x
@@ -125,13 +65,6 @@ instance (Heap h p v a, SymVar v a) => Mutation ST h p v a where
                         return $ s_ nm
   readRef vr = ST $ fromJust . lookup vr <$> S.get
   writeRef vr l = ST $ S.modify $ insert vr l
-
-class SymControl c h (p :: * -> *) (v :: * -> *) a b where
-  ifNonZero :: c (h p v a) b -> c (h p v a) () -> c (h p v a) () -> c (h p v a) ()
-  whileNonZero :: c (h p v a) b -> c (h p v a) () -> c (h p v a) ()
-
-class Runnable c h (p :: * -> *) (v :: * -> *) a where
-  run :: c (h p v a) () -> h p v a
 
 instance (LowerLattice b, Eq b, Heap h p v a, LowerLattice (h p v a),
   Eq (h p v a), Abstract Int b) 
