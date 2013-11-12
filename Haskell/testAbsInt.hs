@@ -52,8 +52,8 @@ class Mutation m h p v a where
   readRef  :: v a -> m (h p v a) (p a)
   writeRef :: v a -> p a -> m (h p v a) ()
 
-class Runnable c h (p :: * -> *) (v :: * -> *) a where
-  run :: c (h p v a) () -> h p v a
+class Runnable c h where
+  run :: c h () -> h
 
 newtype ST s a = ST (S.State s a)
 unST (ST x) = x
@@ -83,13 +83,11 @@ instance (LowerLattice b, Eq b, Abstract Int b, Eq s, Empty s, LowerLattice s) =
        st1 <- S.get
        unless (st1 == st0) (unST $ whileNonZero cond body)
 
-instance (Heap h p v a) => Runnable ST h p v a where
+instance (Heap h p v a) => Runnable ST (h p v a) where
   run (ST body) = S.execState body empty
     
 -- The explicit ST below forces a number of the instances above to be chosen
-program :: (Heap h p v a, Abstract Int a, LowerLattice (h p v a),
-  Eq (h p v a))
-  => ST (h p v a) () -> h p v a
+program :: Heap h p v a => ST (h p v a) () -> h p v a
 program body = run body
        
 -- An actual instance to test with
