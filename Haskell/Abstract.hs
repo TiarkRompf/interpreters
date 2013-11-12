@@ -87,9 +87,9 @@ instance Multiplicative a => Multiplicative (FlatLattice a) where
 instance Multiplicative a => Multiplicative (GLattice a) where
     mul = liftGL2 mul
 
-maybeNonZero :: (Eq b, Abstract Int b, LowerLattice b) => b -> Bool
-maybeNonZero = \a -> not (a `leq` (abstract (0::Int)))
+maybeZero :: (Abstract Int b, LowerLattice b) => b -> Bool
+maybeZero = (abstract (0::Int) `leq`)
 
-maybeZero :: (Eq b, Abstract Int b, LowerLattice b) => b -> Bool
-maybeZero = (zero `leq`)
-  where zero = abstract (0::Int)
+maybeNonZero :: (Abstract Int b, LowerLattice b) => b -> Bool
+maybeNonZero = not . ( `leq` (abstract (0::Int)))
+

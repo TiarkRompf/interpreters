@@ -5,20 +5,20 @@ module Lattice where
 class LowerBounded l where
   bottom :: l
 
-class LowerBounded l => LowerLattice l where
+class (Eq l, LowerBounded l) => LowerLattice l where
   lub :: l -> l -> l
 
 class UpperBounded l where
   top :: l
 
 -- Upper Lattice
-class UpperBounded l => UpperLattice l where
+class (Eq l, UpperBounded l) => UpperLattice l where
   glb :: l -> l -> l
 
 -- Complete Lattices
 class (LowerLattice l, UpperLattice l) => CLattice l where
 
-leq :: (Eq l, LowerLattice l) => l -> l -> Bool
+leq :: LowerLattice l => l -> l -> Bool
 leq a b = a `lub` b == b
 
 -- a flat lattice from a 'flat domain'
