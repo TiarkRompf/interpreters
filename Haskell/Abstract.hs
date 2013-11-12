@@ -66,6 +66,27 @@ instance Additive a => Additive (FlatLattice a) where
 instance Additive a => Additive (GLattice a) where
     add = liftGL2 add
 
+class Multiplicative a where
+    mul :: a -> a -> a
+
+instance Multiplicative Sign where
+    mul = stimes
+
+instance Multiplicative Parity where
+    mul = ptimes
+
+instance Multiplicative Int where
+    mul = (*)
+
+instance Multiplicative NSign where
+    mul = nstimes
+
+instance Multiplicative a => Multiplicative (FlatLattice a) where
+    mul = liftFL2 mul
+
+instance Multiplicative a => Multiplicative (GLattice a) where
+    mul = liftGL2 mul
+
 maybeNonZero :: (Eq b, Abstract Int b, LowerLattice b) => b -> Bool
 maybeNonZero = \a -> not (a `leq` (abstract (0::Int)))
 
