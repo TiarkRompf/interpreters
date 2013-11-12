@@ -28,6 +28,10 @@ class SymExpr prep b where
 class SymVar vrep a where
   s_ :: String -> vrep a
 
+class SymControl c b where
+  ifNonZero :: c b -> c () -> c () -> c ()
+  whileNonZero :: c b -> c () -> c ()
+
 instance (Abstract Int b, Additive b) => SymExpr FlatLattice b where
   int_ x = Embed $ abstract x
   plus_ = add
@@ -36,14 +40,12 @@ instance (Abstract Int b, Additive b) => SymExpr GLattice b where
   int_ x = GEmbed $ abstract x
   plus_ = add
  
-class SymControl c h (p :: * -> *) (v :: * -> *) a b where
-  ifNonZero :: c (h p v a) b -> c (h p v a) () -> c (h p v a) () -> c (h p v a) ()
-  whileNonZero :: c (h p v a) b -> c (h p v a) () -> c (h p v a) ()
+class Empty s where
+  empty :: s
 
-class Heap h p v a where
+class Empty (h p v a) => Heap h p v a where
   insert :: v a -> p a -> h p v a -> h p v a
   lookup :: v a -> h p v a -> Maybe (p a)
-  empty :: h p v a
 
 class Mutation m h p v a where
   newRef   :: String -> p a -> m (h p v a) (v a)
@@ -66,9 +68,8 @@ instance (Heap h p v a, SymVar v a) => Mutation ST h p v a where
   readRef vr = ST $ fromJust . lookup vr <$> S.get
   writeRef vr l = ST $ S.modify $ insert vr l
 
-instance (LowerLattice b, Eq b, Heap h p v a, LowerLattice (h p v a),
-  Eq (h p v a), Abstract Int b) 
-    => SymControl ST h p v a b where
+instance (LowerLattice b, Eq b, Abstract Int b, Eq s, Empty s, LowerLattice s) => 
+    SymControl (ST s) b where
   ifNonZero cond statTrue statFalse = ST $
     do c <- unST cond
        s <- S.get
@@ -113,10 +114,12 @@ deriving instance (Eq a, Eq (v a), Eq (p a)) => Eq (MapHeap p v a)
 instance (Show (p a), Show (v a)) => Show (MapHeap p v a) where
   show (H x) = show x
 
+instance Empty (MapHeap p v a) where
+  empty = H $ Map.empty
+
 instance Ord (v a) => Heap MapHeap p v a where
   insert v r h = H $ Map.insert v r (unH h)
   lookup v h = Map.lookup v (unH h)
-  empty = H $ Map.empty
 
 instance Ord (v a) => LowerBounded (MapHeap p v a) where
   bottom = empty
