@@ -20,25 +20,9 @@ import GHC.Exts
 import Lattice
 import Domains
 import Abstract
+import Language
 
--- The core components under our language, in tagless style
--- val ~ value representation
-class SymExpr val b where
-  int_ :: Int -> val b
-  plus_ :: val b -> val b -> val b
-  times_ :: val b -> val b -> val b
-
--- vrep ~ variable representation
-class SymVar vrep a where
-  s_ :: String -> vrep a
-
-class SymNZControl c b where
-  ifNonZero :: c b -> c () -> c () -> c ()
-  whileNonZero :: c b -> c () -> c ()
-
-class Runnable c h where
-  run :: c h () -> h
-
+-- instances of the language that can be interpreted
 instance (Abstract Int b, Additive b, Multiplicative b) => SymExpr FlatLattice b where
   int_ x = Embed $ abstract x
   plus_ = add
@@ -56,11 +40,6 @@ class Heap h where
   type HeapCtx h :: * -> Constraint
   insert :: HeapCtx h (v a) => v a -> p a -> h p v a -> h p v a
   lookup :: HeapCtx h (v a) => v a -> h p v a -> Maybe (p a)
-
-class Mutation m h p v a where
-  newRef   :: String -> p a -> m (h p v a) (v a)
-  readRef  :: v a -> m (h p v a) (p a)
-  writeRef :: v a -> p a -> m (h p v a) ()
 
 newtype ST s a = ST (S.State s a)
 unST (ST x) = x
@@ -127,20 +106,11 @@ instance Heap MapHeap where
   insert v r h = H $ Map.insert v r (unH h)
   lookup v h = Map.lookup v (unH h)
 
-instance Ord (v a) => LowerBounded (MapHeap p v a) where
+instance LowerBounded (MapHeap p v a) where
   bottom = empty
 
 instance (Eq a, Ord (v a), LowerLattice (p a)) => LowerLattice (MapHeap p v a) where
   lub s1 s2 = H $ Map.foldrWithKey (Map.insertWith lub) (unH s1) (unH s2)
-
--- These combinators are even more useful to make 'real' programs 
-int :: (Monad m, SymExpr p b) => Int -> m (p b)
-int = return . int_
-
-plus = liftM2 plus_
-newVar nm vl = newRef nm =<< vl
-readVar v = readRef v
-writeVar nm vl = writeRef nm =<< vl
 
 -- type signatures needed
 pprog1 :: (SymExpr p a, Monad (m (h p v a)), Mutation m h p v a, 
