@@ -9,7 +9,6 @@ module Main where
 
 import Prelude hiding (lookup)
 import qualified Data.Map as Map
--- import Control.Monad (liftM2, unless)
 import Control.Applicative ((<$>))
 import Control.Monad.Identity
 import qualified Control.Monad.Trans.State as S
@@ -24,6 +23,7 @@ import Abstract
 class SymExpr prep b where
   int_ :: Int -> prep b
   plus_ :: prep b -> prep b -> prep b
+  times_ :: prep b -> prep b -> prep b
 
 class SymVar vrep a where
   s_ :: String -> vrep a
@@ -32,13 +32,15 @@ class SymControl c b where
   ifNonZero :: c b -> c () -> c () -> c ()
   whileNonZero :: c b -> c () -> c ()
 
-instance (Abstract Int b, Additive b) => SymExpr FlatLattice b where
+instance (Abstract Int b, Additive b, Multiplicative b) => SymExpr FlatLattice b where
   int_ x = Embed $ abstract x
   plus_ = add
+  times_ = mul
  
-instance (Abstract Int b, Additive b) => SymExpr GLattice b where
+instance (Abstract Int b, Additive b, Multiplicative b) => SymExpr GLattice b where
   int_ x = GEmbed $ abstract x
   plus_ = add
+  times_ = mul
  
 class Empty s where
   empty :: s
