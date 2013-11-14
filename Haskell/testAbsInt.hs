@@ -69,11 +69,11 @@ instance (LowerLattice b, Eq b, Abstract Int b, Eq s, Empty s, LowerLattice s) =
        st1 <- S.get
        unless (st1 == st0) (unST $ whileNonZero cond body)
 
-instance (Heap h, Empty (h p v)) => Runnable ST (h p v) where
+instance (Empty s) => Runnable ST s where
   run (ST body) = S.execState body empty
     
 -- The explicit ST below forces a number of the instances above to be chosen
-program :: (Heap h, Empty (h p v)) => ST (h p v) () -> h p v
+program :: Empty s => ST s () -> s
 program body = run body
        
 -- An actual instance to test with
