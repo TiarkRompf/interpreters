@@ -8,7 +8,7 @@ class Expr val where
   times_ :: val Int -> val Int -> val Int
 
 class IfNZ rep where
-  ifNonZero :: rep Int -> rep t -> rep t 
+  ifNonZero :: rep Int -> rep t -> rep t -> rep t 
 
 class Func rep where
   lam :: (rep a -> rep b) -> rep (a -> b)
