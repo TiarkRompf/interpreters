@@ -38,8 +38,8 @@ class Empty s where
 
 class Heap h where
   type HeapCtx h :: * -> Constraint
-  insert :: HeapCtx h (v a) => v a -> p a -> h p v a -> h p v a
-  lookup :: HeapCtx h (v a) => v a -> h p v a -> Maybe (p a)
+  insert :: HeapCtx h var => var -> val -> h val var -> h val var
+  lookup :: HeapCtx h var => var -> h val var -> Maybe val
 
 newtype ST s a = ST (S.State s a)
 unST (ST x) = x
@@ -48,7 +48,7 @@ instance Monad (ST s) where
   return = ST . return
   (ST m) >>= k = ST $ m >>= unST . k
 
-instance (Heap h, HeapCtx h (v a), SymVar v a) => Mutation ST h p v a where
+instance (Heap h, HeapCtx h (v a), SymVar v a) => Mutation ST h (p a) (v a) where
   newRef nm l = ST $ do S.modify $ insert (s_ nm) l
                         return $ s_ nm
   readRef vr = ST $ fromJust . lookup vr <$> S.get
@@ -69,11 +69,11 @@ instance (LowerLattice b, Eq b, Abstract Int b, Eq s, Empty s, LowerLattice s) =
        st1 <- S.get
        unless (st1 == st0) (unST $ whileNonZero cond body)
 
-instance (Heap h, Empty (h p v a)) => Runnable ST (h p v a) where
+instance (Heap h, Empty (h p v)) => Runnable ST (h p v) where
   run (ST body) = S.execState body empty
     
 -- The explicit ST below forces a number of the instances above to be chosen
-program :: (Heap h, Empty (h p v a)) => ST (h p v a) () -> h p v a
+program :: (Heap h, Empty (h p v)) => ST (h p v) () -> h p v
 program body = run body
        
 -- An actual instance to test with
@@ -92,13 +92,13 @@ instance Show (IVar a) where
 instance SymVar IVar a where
   s_ s = IV (foldr (\c n -> n*2^8 + ord c) 0 s)
 
-data MapHeap p v a = H { unH :: Map.Map (v a) (p a) }
+data MapHeap p v = H { unH :: Map.Map v p }
 
-deriving instance (Eq a, Eq (v a), Eq (p a)) => Eq (MapHeap p v a)
-instance (Show (p a), Show (v a)) => Show (MapHeap p v a) where
+deriving instance (Eq a, Eq (v a), Eq (p a)) => Eq (MapHeap (p a) (v a))
+instance (Show (p a), Show (v a)) => Show (MapHeap (p a) (v a)) where
   show (H x) = show x
 
-instance Empty (MapHeap p v a) where
+instance Empty (MapHeap (p a) (v a)) where
   empty = H $ Map.empty
 
 instance Heap MapHeap where
@@ -106,15 +106,15 @@ instance Heap MapHeap where
   insert v r h = H $ Map.insert v r (unH h)
   lookup v h = Map.lookup v (unH h)
 
-instance LowerBounded (MapHeap p v a) where
+instance LowerBounded (MapHeap (p a) (v a)) where
   bottom = empty
 
-instance (Eq a, Ord (v a), LowerLattice (p a)) => LowerLattice (MapHeap p v a) where
+instance (Eq a, Ord (v a), LowerLattice (p a)) => LowerLattice (MapHeap (p a) (v a)) where
   lub s1 s2 = H $ Map.foldrWithKey (Map.insertWith lub) (unH s1) (unH s2)
 
 -- type signatures needed
-pprog1 :: (SymExpr p a, Monad (m (h p v a)), Mutation m h p v a, 
-   SymNZControl (m (h p v a)) (p a)) => m (h p v a) ()
+pprog1 :: (SymExpr p a, Monad (m (h (p a) (v a))), Mutation m h (p a) (v a), 
+   SymNZControl (m (h (p a) (v a))) (p a)) => m (h (p a) (v a)) ()
 pprog1 = 
   do 
     c <- newVar "c" (int 0)
@@ -125,9 +125,9 @@ prog1 = program pprog1
 
 prog2 :: (Eq b, Abstract Int b, Additive b,
   SymVar v b, Ord (v b), LowerLattice (p b),
-  Heap h, LowerLattice (h p v b), Eq (h p v b),
-  Empty (h p v b), HeapCtx h (v b),
-  Abstract Int (p b), Eq (p b), SymExpr p b) => h p v b
+  Heap h, LowerLattice (h (p b) (v b)), Eq (h (p b) (v b)),
+  Empty (h (p b) (v b)), HeapCtx h (v b),
+  Abstract Int (p b), Eq (p b), SymExpr p b) => h (p b) (v b)
 prog2 = program (
   do 
     c <- newVar "c" (int 0)
@@ -136,15 +136,15 @@ prog2 = program (
   where
     -- the signature is needed because Haskell correctly infers that 
     -- this constant can live somewhere else than the global ones
-    const1 :: (Abstract Int b0, SymExpr p0 b0, Heap h0) => ST (h0 p0 v0 b0) (p0 b0)
+    const1 :: (Abstract Int b0, SymExpr p0 b0, Heap h0) => ST (h0 (p0 b0) (v0 b0)) (p0 b0)
     const1 = int 1
   
 prog3 :: (Abstract Int b,
   SymVar v b, Ord (v b),
-  Heap h, LowerLattice (h p v b), Eq (h p v b),
-  Empty (h p v b), HeapCtx h (v b),
+  Heap h, LowerLattice (h (p b) (v b)), Eq (h (p b) (v b)),
+  Empty (h (p b) (v b)), HeapCtx h (v b),
   Abstract Int (p b), LowerLattice (p b), Eq (p b), SymExpr p b) => 
-  Int -> h p v b
+  Int -> h (p b) (v b)
 prog3 = \n -> program (
   do 
     c <- newVar "c" (int n)
@@ -160,14 +160,14 @@ prog4 = program (
         (writeVar x (int 7)) )
 
 -- Be monomorphic to be able to print something
-type AS a = MapHeap FlatLattice Var a
+type AS a = MapHeap (FlatLattice a) (Var a)
 
 main = do putStrLn $ show (prog1 :: AS Sign)
           putStrLn $ show (prog2 :: AS Sign)
           putStrLn $ show (prog1 :: AS Parity)
           putStrLn $ show (prog1 :: AS Int)
-          putStrLn $ show (prog1 :: MapHeap GLattice Var NSign)
-          putStrLn $ show (prog1 :: MapHeap GLattice IVar Sign)
+          putStrLn $ show (prog1 :: MapHeap (GLattice NSign) (Var NSign))
+          putStrLn $ show (prog1 :: MapHeap (GLattice Sign) (IVar Sign))
           putStrLn $ show (prog3 5 :: AS Parity)
           putStrLn $ show (prog3 5 :: AS Int)
           putStrLn $ show (prog3 0 :: AS Parity)

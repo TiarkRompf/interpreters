@@ -21,10 +21,10 @@ class SymNZControl c b where
 class Runnable c h where
   run :: c h () -> h
 
-class Mutation m h p v a where
-  newRef   :: String -> p a -> m (h p v a) (v a)
-  readRef  :: v a -> m (h p v a) (p a)
-  writeRef :: v a -> p a -> m (h p v a) ()
+class Mutation m h p v where
+  newRef   :: String -> p -> m (h p v) v
+  readRef  :: v -> m (h p v) p
+  writeRef :: v -> p -> m (h p v) ()
 
 -- These combinators are useful to make 'real' programs 
 int :: (Monad m, SymExpr p b) => Int -> m (p b)
