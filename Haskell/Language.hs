@@ -15,7 +15,4 @@ class Func rep where
   app :: rep (a -> b) -> rep a -> rep b
   fix :: (rep (a -> b) -> rep (a -> b)) -> rep (a -> b)
   
-class Program p where
-  prog :: (rep a -> rep b) -> p (rep a) (rep b)
-
-type Syntax p rep = (Program p, Expr rep, Func rep, IfNZ rep)
+type Syntax rep = (Expr rep, Func rep, IfNZ rep)

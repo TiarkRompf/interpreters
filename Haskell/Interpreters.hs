@@ -50,20 +50,11 @@ instance Func R where
 instance IfNZ R where
   ifNonZero = liftA3 (ifNZ)
 
-type P a b = a -> b
-
-instance Program (->) where
-  prog f = f
-
--- and our 'fac' program is interpretable:
-rfac :: P (R Int) (R Int)
-rfac = fac 
-
-tester :: P (R a) (R b) -> (a -> b)
-tester f = unR . f . R
+tester :: (() -> R (a ->  b)) -> (a -> b)
+tester f = unR $ f ()
 
 -- and it works (will be translated to a unit test later)
-test1 = ((tester rfac)(4) == 24 )
+test1 = ((tester fac)(4) == 24 )
 -------------------------------------------------
 -- String Compiler (needs some context)
 newtype SC a = SC {s :: Int -> (String, Int)}
@@ -80,6 +71,12 @@ liftsc2 f x y = SC (\n -> let (e1,n1) = s x n
                               (e2,n2) = s y n1
                           in (f e1 e2, n2) )
 
+liftsc3 :: (String -> String -> String -> String) -> SC a -> SC b -> SC c -> SC d
+liftsc3 f x y z = SC (\n -> let (e1,n1) = s x n
+                                (e2,n2) = s y n1
+                                (e3,n3) = s z n2
+                            in (f e1 e2 e3, n3) )
+
 instance MyApp SC where
   type Ctx SC a = Show a
   pure x = SC $ \n -> (show x, n)
@@ -87,8 +84,8 @@ instance MyApp SC where
                           (x1, n2) = s x n1
                       in (f1 ++ " " ++ x1, n2))
 instance Expr SC where
-  int_ = pure
-  plus_ = liftsc2 (\x y -> x ++ " + " ++ y)
+  int_ = \n -> if n < 0 then SC (\n1 -> ("(" ++ (show n) ++ ")", n1))  else pure n
+  plus_ = liftsc2 (\x y -> "(" ++ x ++ " + " ++ y ++ ")")
   times_ = liftsc2 (\x y -> x ++ " * " ++ y)
 
 instance Func SC where
@@ -96,3 +93,16 @@ instance Func SC where
                         var = SC (\n -> (vs, n)) -- can't use pure for typing reasons
                         (body, n1) = s (f var) (n+1)  -- note the +1
                     in ("(\\" ++ vs ++ " -> " ++ body ++ ")", n1))
+  app = liftsc2 (\x y -> x ++ " " ++ y)
+  fix f = SC (\n -> let vs = 'V' : show n
+                        var = SC (\n -> (vs, n))
+                        (body, n1) = s (f var) (n+1)
+                    in ("fix (\\" ++ vs ++ " -> " ++ body ++ ")", n1))
+
+instance IfNZ SC where
+  ifNonZero = liftsc3 (\x y z -> "if (not (" ++ x ++ ") == 0) then " ++ y ++ " else " ++ z)
+
+testersc f = fst $ s (f ()) 0
+
+test2 = (testersc fac ) == 
+   "(\\V0 -> fix (\\V1 -> (\\V2 -> if (not (V2) == 0) then V2 * V1 (V2 + (-1)) else 1)) V0)" 
