@@ -55,6 +55,7 @@ tester f = unR $ f ()
 
 -- and it works (will be translated to a unit test later)
 test1 = ((tester fac)(4) == 24 )
+
 -------------------------------------------------
 -- String Compiler (needs some context)
 newtype SC a = SC {s :: Int -> (String, Int)}
@@ -89,12 +90,12 @@ instance Expr SC where
   times_ = liftsc2 (\x y -> x ++ " * " ++ y)
 
 instance Func SC where
-  lam f = SC (\n -> let vs = 'V' : show n
+  lam f = SC (\n -> let vs = 'y' : show n
                         var = SC (\n -> (vs, n)) -- can't use pure for typing reasons
                         (body, n1) = s (f var) (n+1)  -- note the +1
                     in ("(\\" ++ vs ++ " -> " ++ body ++ ")", n1))
   app = liftsc2 (\x y -> x ++ " " ++ y)
-  fix f = SC (\n -> let vs = 'V' : show n
+  fix f = SC (\n -> let vs = 'y' : show n
                         var = SC (\n -> (vs, n))
                         (body, n1) = s (f var) (n+1)
                     in ("fix (\\" ++ vs ++ " -> " ++ body ++ ")", n1))
@@ -105,4 +106,33 @@ instance IfNZ SC where
 testersc f = fst $ s (f ()) 0
 
 test2 = (testersc fac ) == 
-   "(\\V0 -> fix (\\V1 -> (\\V2 -> if (not (V2) == 0) then V2 * V1 (V2 + (-1)) else 1)) V0)" 
+   "(\\y0 -> fix (\\y1 -> (\\y2 -> if (not (y2) == 0) then y2 * y1 (y2 + (-1)) else 1)) y0)" 
+
+-------------------------------------------------
+-- Labelling of parts of the syntax
+
+data Label = Root | InThen | InElse | InLam | InApp | InFix | InIf | IsVar
+
+data WrappedRepr repr a = WR {unWR :: repr a}
+
+data LS repr a = LS {l :: Label, unLS :: repr a}
+
+instance Expr repr => Expr (WrappedRepr repr) where
+  int_ x = WR (int_ x)
+  plus_ (WR x) (WR y) = WR( plus_ x y)
+  times_ (WR x) (WR y) = WR( times_ x y)
+
+instance Func repr => Func (LS repr) where
+  lam f = LS InLam (lam g)
+     where g x = unLS $ f (LS IsVar x)
+  app f x = LS InApp (app (unLS f) (unLS x))
+  fix f = LS InFix (fix g)
+     where g x = unLS $ f (LS IsVar x)
+      
+instance IfNZ repr => IfNZ (WrappedRepr repr) where
+  ifNonZero (WR b) (WR tb) (WR eb) = WR $ ifNonZero b tb eb
+
+-- This isn't right... InThen and InElse are not being used.
+instance IfNZ repr => IfNZ (LS repr) where
+  ifNonZero b tb eb = LS InIf (unWR $ ifNonZero (WR (unLS b)) (WR (unLS tb)) (WR (unLS eb)))
+
