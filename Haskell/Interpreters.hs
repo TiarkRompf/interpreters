@@ -1,4 +1,5 @@
-{-# LANGUAGE TypeFamilies, ConstraintKinds #-}
+{-# LANGUAGE TypeFamilies, ConstraintKinds, TypeSynonymInstances, FlexibleInstances,
+      DeriveFunctor #-}
 module Interpreters where
 
 -- import Control.Applicative
@@ -27,10 +28,7 @@ instance MyApp ((->) a) where
 
 -------------------------------------------------
 -- Direct interpreter
-newtype R a = R {unR :: a} deriving (Show)
-
-instance Functor R where
-  fmap f (R x) = R (f x)
+newtype R a = R {unR :: a} deriving (Show, Functor)
 
 instance MyApp R where
   type Ctx R a = ()
@@ -109,30 +107,46 @@ test2 = (testersc fac ) ==
    "(\\y0 -> fix (\\y1 -> (\\y2 -> if (not (y2) == 0) then y2 * y1 (y2 + (-1)) else 1)) y0)" 
 
 -------------------------------------------------
--- Labelling of parts of the syntax
+-- Trace that we travel parts of the syntax
 
-data Label = Root | InThen | InElse | InLam | InApp | InFix | InIf | IsVar
+data Label = Root | InThen | InElse | InLam | InFix  deriving Show
 
-data WrappedRepr repr a = WR {unWR :: repr a}
+newtype Trace repr a = TR ([Label] -> ([Label], repr a))
+unTR (TR x) = x
 
-data LS repr a = LS {l :: Label, unLS :: repr a}
+pureTR x = TR $ \l -> (l,x)
+runTR l tr = snd $ unTR tr l
 
-instance Expr repr => Expr (WrappedRepr repr) where
-  int_ x = WR (int_ x)
-  plus_ (WR x) (WR y) = WR( plus_ x y)
-  times_ (WR x) (WR y) = WR( times_ x y)
+liftTR2 :: (repr a -> repr b -> repr c) -> Trace repr a -> Trace repr b -> Trace repr c
+liftTR2 f = \x y -> TR $ \l ->
+                 let (l',x') = unTR x l
+                     (l'',y') = unTR y l'
+                 in (l'', f x' y')
 
-instance Func repr => Func (LS repr) where
-  lam f = LS InLam (lam g)
-     where g x = unLS $ f (LS IsVar x)
-  app f x = LS InApp (app (unLS f) (unLS x))
-  fix f = LS InFix (fix g)
-     where g x = unLS $ f (LS IsVar x)
-      
-instance IfNZ repr => IfNZ (WrappedRepr repr) where
-  ifNonZero (WR b) (WR tb) (WR eb) = WR $ ifNonZero b tb eb
+instance (Expr repr) => Expr (Trace repr) where
+  int_ x = TR $ \_ -> ([],int_ x)
+  plus_ = liftTR2 (plus_)
+  times_ = liftTR2 (times_)
 
--- This isn't right... InThen and InElse are not being used.
-instance IfNZ repr => IfNZ (LS repr) where
-  ifNonZero b tb eb = LS InIf (unWR $ ifNonZero (WR (unLS b)) (WR (unLS tb)) (WR (unLS eb)))
+instance (Func repr) => Func (Trace repr) where
+  lam f = TR $ \l ->
+            let g x = runTR l $ f (pureTR x) in
+            ([InLam] ++ l, lam g)
+  app = liftTR2 app
+  fix f = TR $ \l ->
+            let g x = runTR l $ f (pureTR x) in
+            ([InFix] ++ l, Language.fix g)
+{-
 
+instance IfNZ repr => IfNZ (MW repr) where
+  ifNonZero (MW b) (MW tb) (MW eb) = MW $ 
+    do b' <- b
+       tb' <- tell [InThen] >> tb
+       eb' <- tell [InElse] >> eb
+       return $ ifNonZero b' tb' eb'
+
+testmw :: (() -> MW R a) -> (R a, [Label])
+testmw f = runWriter . unMW $ f ()
+test3 :: (R Int, [Label])
+test3 = runWriter $ unMW (app (fac ()) (int_ 4))
+-}
