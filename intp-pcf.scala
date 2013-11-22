@@ -45,6 +45,13 @@ trait CBNCPSInterpreter[Res] extends Syntax {
   type K[T] = T => Res
   type Rep[T] = K[T] => Res
 
+  // the final continuation
+  def runCont[T] : Rep[T]
+
+  // Standard functor map
+  def fmap[A, B](f: A=>B, x: Rep[A]): Rep[B] =
+    (k: K[B]) => runCont (k.compose(f))
+
   def nat(x: Int): Rep[Int] = (k: K[Int]) => k(x)
 
   def plus(e1: Rep[Int], e2: Rep[Int]): Rep[Int] =
@@ -71,6 +78,8 @@ trait CBNCPSInterpreter[Res] extends Syntax {
 
   type Prog[A, B] = A => B
   def prog[A,B](f: Rep[A] => Rep[B]): Prog[A,B] = ???
+
+  def run[A](x: Rep[A], k: K[A]): Res = x(k)
 
 }
 
