@@ -37,6 +37,43 @@ trait DirectInterpreter extends Syntax {
 
 }
 
+/**
+ * Directly following Carette-al:JFP09, Section 5
+ */
+trait CBNCPSInterpreter[Res] extends Syntax {
+
+  type K[T] = T => Res
+  type Rep[T] = K[T] => Res
+
+  def nat(x: Int): Rep[Int] = (k: K[Int]) => k(x)
+
+  def plus(e1: Rep[Int], e2: Rep[Int]): Rep[Int] =
+    (k: K[Int]) => e1 ((v1: Int) =>
+                   e2 ((v2: Int) => k(v1 + v2)))
+
+  def times(e1: Rep[Int], e2: Rep[Int]): Rep[Int] =
+    (k: K[Int]) => e1 ((v1: Int) =>
+                   e2 ((v2: Int) => k(v1 * v2)))
+
+  def ifnz[T](eb: Rep[Int], et: =>Rep[T], ee: =>Rep[T]): Rep[T] =
+    (k: K[T]) => eb ((vb: Int) => if (vb != 0) et(k) else ee(k))
+
+  def fix[A,B] (g: Rep[A=>B] => Rep[A=>B]): Rep[A=>B] = {
+    def fx(f: Rep[A=>B] => Rep[A=>B])(x: Rep[A]): Rep[B] = app(f(lam(fx(f))), x)
+    lam(fx(g))
+  }
+
+  def app[A, B](e1: Rep[A => B], e2: Rep[A]): Rep[B] =
+    (k: K[B]) => e1 ((f : (A => B)) => e2(k.compose(f)))
+
+  def lam[A,B](f: Rep[A] => Rep[B]): Rep[A => B] =
+    (k: K[A=>B]) => ???
+
+  type Prog[A, B] = A => B
+  def prog[A,B](f: Rep[A] => Rep[B]): Prog[A,B] = ???
+
+}
+
 trait DirectCompiler extends Syntax {
 
   type Rep[T] = String
@@ -125,7 +162,7 @@ trait Labeling extends LabeledSyntax {
   abstract override def times(x: Rep[Int], y: Rep[Int]): Rep[Int] = exp(super.times(x,y))
   abstract override def app[A,B](f: Rep[A=>B], x: Rep[A]): Rep[B] = exp(super.app(f,x))
 
-  abstract override def ifnz[T](c: Rep[Int], a: =>Rep[T], b: =>Rep[T]): Rep[T] 
+  abstract override def ifnz[T](c: Rep[Int], a: =>Rep[T], b: =>Rep[T]): Rep[T]
     = exp(super.ifnz(c, block(InThen(label))(a), block(InElse(label))(b)))
 
   abstract override def lam[A,B](f: Rep[A] => Rep[B]): Rep[A=>B] = {
@@ -147,7 +184,7 @@ trait Tracing extends Labeling {
 
   def store: Any = "?"
 
-  override def block[A](l: Label)(b: => A) = 
+  override def block[A](l: Label)(b: => A) =
     super.block(l) { println(s"pp: $label".padTo(50,' ') + s"state: $store"); b }
 
 }
@@ -179,8 +216,8 @@ trait ANFCompiler extends DirectCompiler with Labeling {
   }
 
 
-  override def block[A](l: Label)(b: => A) = 
-    super.block(l) { 
+  override def block[A](l: Label)(b: => A) =
+    super.block(l) {
       val code0 = code
       val vars0 = vars
       try {
@@ -251,7 +288,7 @@ trait LambdaLiftLCompiler extends DirectCompiler with Labeling {
 object TestLambdaLiftLCompiler extends LambdaLiftLCompiler with Labeling with Examples {
   // tests
 
-  def main(args: Array[String]): Unit = {    
+  def main(args: Array[String]): Unit = {
     println(fac)
     assert(fac ==
 """def f0(y0,y1)(y2) = if (y2 != 0) y2 * y1(y2 + -1) else 1
