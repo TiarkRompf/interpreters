@@ -228,7 +228,7 @@ object TestDirectCompiler extends DirectCompiler with Examples {
   def main(args: Array[String]): Unit = {
     println(fac)
     assert(fac ==
-"""fix { f0 => lam { y1 => if (y1 != 0) y1 * f0(y1 + -1) else 1 } }(x)""")
+"""prog { y0 => fix { y1 => lam { y2 => if (y2 != 0) y2 * y1(y2 + -1) else 1 } }(y0) }""")
   }
 
 }
