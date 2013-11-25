@@ -1,6 +1,8 @@
 package intp.pcf
 
-trait Syntax {
+import scala.language.higherKinds
+
+trait FOSyntax {
   type Rep[T]
 
   def nat(c: Int): Rep[Int]
@@ -8,12 +10,20 @@ trait Syntax {
   def times(x: Rep[Int], y: Rep[Int]): Rep[Int]
   def ifnz[T](c: Rep[Int], a: =>Rep[T], b: =>Rep[T]): Rep[T]
 
-  def lam[A,B](f: Rep[A] => Rep[B]): Rep[A=>B]
-  def app[A,B](f: Rep[A=>B], x: Rep[A]): Rep[B]
   def fix[A,B](f: Rep[A=>B] => Rep[A=>B]): Rep[A=>B]
 
   type Prog[A,B]
   def prog[A,B](f: Rep[A] => Rep[B]): Prog[A,B]
+}
+
+trait Syntax extends FOSyntax {
+  def lam[A,B](f: Rep[A] => Rep[B]): Rep[A=>B]
+  def app[A,B](f: Rep[A=>B], x: Rep[A]): Rep[B]
+}
+
+trait Syntax2 extends FOSyntax {
+  def lam2[A,B](f: Rep[A] => Rep[B]): Rep[Rep[A]=>Rep[B]]
+  def app2[A,B](f: Rep[Rep[A]=>Rep[B]], x: Rep[A]): Rep[B]
 }
 
 trait DirectInterpreter extends Syntax {
@@ -40,7 +50,7 @@ trait DirectInterpreter extends Syntax {
 /**
  * Directly following Carette-al:JFP09, Section 5
  */
-trait CBNCPSInterpreter[Res] extends Syntax {
+trait CBNCPSInterpreter[Res] extends Syntax2 {
 
   type K[T] = T => Res
   type Rep[T] = K[T] => Res
@@ -58,16 +68,17 @@ trait CBNCPSInterpreter[Res] extends Syntax {
   def ifnz[T](eb: Rep[Int], et: =>Rep[T], ee: =>Rep[T]): Rep[T] =
     (k: K[T]) => eb ((vb: Int) => if (vb != 0) et(k) else ee(k))
 
-  def fix[A,B] (g: Rep[A=>B] => Rep[A=>B]): Rep[A=>B] = {
-    def fx(f: Rep[A=>B] => Rep[A=>B])(x: Rep[A]): Rep[B] = app(f(lam(fx(f))), x)
-    lam(fx(g))
+  def fix[A,B] (g: Rep[Rep[A]=>Rep[B]] => Rep[Rep[A]=>Rep[B]]): Rep[Rep[A]=>Rep[B]] = {
+    def fx(f: Rep[Rep[A]=>Rep[B]] => Rep[Rep[A]=>Rep[B]])(x: Rep[A]): Rep[B] = 
+        app2( f (lam2 ((y:Rep[A]) => fx(f)(y))), x)
+    lam2 ((y: Rep[A]) => fx(g)(y))
   }
 
-  def app[A, B](e1: Rep[A => B], e2: Rep[A]): Rep[B] =
-    (k: K[B]) => e1 ((f : (A => B)) => e2(k.compose(f)))
+  def app2[A, B](e1: Rep[Rep[A] => Rep[B]], e2: Rep[A]): Rep[B] =
+    (k: K[B]) => e1 ((f : (Rep[A] => Rep[B])) => (f(e2))(k))
 
-  def lam[A,B](f: Rep[A] => Rep[B]): Rep[A => B] =
-    (k: K[A=>B]) => ???
+  def lam2[A,B](f: Rep[A] => Rep[B]): Rep[Rep[A] => Rep[B]] =
+    (k: K[Rep[A] => Rep[B]]) => k(f)
 
   type Prog[A, B] = A => B
   def prog[A,B](f: Rep[A] => Rep[B]): Prog[A,B] = ???
