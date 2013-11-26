@@ -22,8 +22,11 @@ trait Syntax extends FOSyntax {
 }
 
 trait Syntax2 extends FOSyntax {
-  def lam2[A,B](f: Rep[A] => Rep[B]): Rep[Rep[A]=>Rep[B]]
-  def app2[A,B](f: Rep[Rep[A]=>Rep[B]], x: Rep[A]): Rep[B]
+  // A type for L-function (following Jacques' suggestion)
+  type :~>[A, B] = Rep[Rep[A] => Rep[B]]
+
+  def lam2[A,B](f: Rep[A] => Rep[B]): A :~> B
+  def app2[A,B](f: A :~> B, x: Rep[A]): Rep[B]
 }
 
 trait DirectInterpreter extends Syntax {
@@ -76,18 +79,18 @@ trait CBNCPSInterpreter[Res] extends Syntax2 {
     (k: K[T]) => eb ((vb: Int) => if (vb != 0) et(k) else ee(k))
 
   def fix[A,B] (g: Rep[Rep[A]=>Rep[B]] => Rep[Rep[A]=>Rep[B]]): Rep[Rep[A]=>Rep[B]] = {
-    def fx(f: Rep[Rep[A]=>Rep[B]] => Rep[Rep[A]=>Rep[B]])(x: Rep[A]): Rep[B] = 
+    def fx(f: (A :~> B) => (A :~> B))(x: Rep[A]): Rep[B] =
         app2( f (lam2 ((y:Rep[A]) => fx(f)(y))), x)
     lam2 ((y: Rep[A]) => fx(g)(y))
   }
 
-  def app2[A, B](e1: Rep[Rep[A] => Rep[B]], e2: Rep[A]): Rep[B] =
+  def app2[A, B](e1: A :~> B, e2: Rep[A]): Rep[B] =
     (k: K[B]) => e1 ((f : (Rep[A] => Rep[B])) => (f(e2))(k))
 
-  def lam2[A,B](f: Rep[A] => Rep[B]): Rep[Rep[A] => Rep[B]] =
+  def lam2[A,B](f: Rep[A] => Rep[B]): A :~> B =
     (k: K[Rep[A] => Rep[B]]) => k(f)
 
-  type Prog[A, B] = Rep[Rep[A] => Rep[B]]
+  type Prog[A, B] = A :~> B
   def prog[A,B](f: Rep[A] => Rep[B]): Prog[A,B] = lam2(f)
 
   def run[A](x: Rep[A], k: K[A]): Res = x(k)
