@@ -59,6 +59,7 @@ trait CBNCPSInterpreter[Res] extends Syntax2 {
   type Rep[T] = K[T] => Res
 
   type :~>[A, B] = Rep[Rep[A] => Rep[B]]
+  //type :~>[A, B] = Rep[A => B]
 
   // the final continuation
   def runCont[T] : Rep[T]
