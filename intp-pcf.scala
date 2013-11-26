@@ -61,13 +61,6 @@ trait CBNCPSInterpreter[Res] extends Syntax2 {
   type :~>[A, B] = Rep[Rep[A] => Rep[B]]
   //type :~>[A, B] = Rep[A => B]
 
-  // the final continuation
-  def runCont[T] : Rep[T]
-
-  // Standard functor map
-  def fmap[A, B](f: A=>B, x: Rep[A]): Rep[B] =
-    (k: K[B]) => runCont (k.compose(f))
-
   def nat(x: Int): Rep[Int] = (k: K[Int]) => k(x)
 
   def plus(e1: Rep[Int], e2: Rep[Int]): Rep[Int] =
@@ -99,6 +92,78 @@ trait CBNCPSInterpreter[Res] extends Syntax2 {
   def run[A](x: Rep[A], k: K[A]): Res = x(k)
 
 }
+
+trait ASTCompiler extends Syntax {
+
+  //TODO: Ilya - can we overcome this burden and generate it (semi-)-automatically?
+
+  // Expressions
+  sealed abstract class Exp
+  case class Id(x: String) extends Exp
+  case class Nat(c: Int) extends Exp
+  case class Plus(a: Exp, b: Exp) extends Exp
+  case class Times(a: Exp, b: Exp) extends Exp
+  case class Ifnz(c: Exp, tb: Exp, eb: Exp) extends Exp
+  case class Lam(x: Id, b: Exp) extends Exp
+  case class App(t1: Exp, t2: Exp) extends Exp
+  case class Fix(t: Exp) extends Exp
+
+  sealed abstract class Value
+  case class ValNat(c: Int) extends Value
+  case class ValFun(x: Id, body: Exp, env: Env) extends Value
+
+  type Env = Map[Id, Closure]
+  case class Closure(t: Exp, e: Env)
+
+  type Rep[_] = Exp
+
+  // --------------------------------------------------------
+  var nest = 0
+  def nesting(f: Exp => Exp)(x: Exp) = {
+    nest += 1; try f(x) finally nest -= 1
+  }
+  // --------------------------------------------------------
+
+  def nat(c: Int) = Nat(c)
+  def plus(x: Exp, y: Exp) = Plus(x, y)
+  def times(x: Exp, y: Exp) = Times(x, y)
+  def ifnz[T](c: Exp, a: => Exp, b: => Exp) = Ifnz(c, a, b)
+  def lam[A, B](f: Exp => Exp): Exp = {
+    val x = Id(s"y$nest")
+    Lam(x, nesting(f)(x))
+  }
+  def app[A, B](f: Exp, x: Exp) = App(f, x)
+  def fix[A, B](f: Exp => Exp) = {
+    val x = Id(s"y$nest")
+    Fix(Lam(x, nesting(f)(x)))
+  }
+
+  type Prog[A,B] = Exp
+  def prog[A,B](f: Exp => Exp) = {
+      val x = Id(s"y$nest")
+      Lam(x, nesting(f)(x))
+  }
+
+}
+
+/**
+ * Same as AST compiler, but with closure conversion
+ */
+trait ClosureConvertingCompiler extends ASTCompiler {
+  // TODO
+
+}
+
+
+/**
+ * An environment-passing interpreter, implementing
+ * a Reynolds-style natural semantics in the form of
+ * a closure-based evaluation function (see Danvy:ICFP08)
+ */
+trait EnvironmentPassingInterpreter extends ClosureConvertingCompiler {
+  // TODO
+}
+
 
 trait DirectCompiler extends Syntax {
 
@@ -143,6 +208,17 @@ object TestDirectInterpreter extends DirectInterpreter with Examples {
     assert(fac(4) == 24)
   }
 }
+
+object TestASTCompiler extends ASTCompiler with Examples {
+
+  def main(args: Array[String]): Unit = {
+    println(fac)
+    assert(fac ==
+      Lam(Id("y0"), App(Fix(Lam(Id("y1"), Lam(Id("y2"), Ifnz(Id("y2"), Times(Id("y2"), App(Id("y1"), Plus(Id("y2"), Nat(-1)))), Nat(1))))), Id("y0"))))
+  }
+
+}
+
 
 
 object TestDirectCompiler extends DirectCompiler with Examples {
