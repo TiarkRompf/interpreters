@@ -87,8 +87,8 @@ trait CBNCPSInterpreter[Res] extends Syntax2 {
   def lam2[A,B](f: Rep[A] => Rep[B]): Rep[Rep[A] => Rep[B]] =
     (k: K[Rep[A] => Rep[B]]) => k(f)
 
-  type Prog[A, B] = A => B
-  def prog[A,B](f: Rep[A] => Rep[B]): Prog[A,B] = ???
+  type Prog[A, B] = Rep[Rep[A] => Rep[B]]
+  def prog[A,B](f: Rep[A] => Rep[B]): Prog[A,B] = lam2(f)
 
   def run[A](x: Rep[A], k: K[A]): Res = x(k)
 
