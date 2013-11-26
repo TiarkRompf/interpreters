@@ -22,8 +22,8 @@ trait Syntax extends FOSyntax {
 }
 
 trait Syntax2 extends FOSyntax {
-  // A type for L-function (following Jacques' suggestion)
-  type :~>[A, B] = Rep[Rep[A] => Rep[B]]
+  // Abstract type for L-function (following Jacques' suggestion)
+  type :~>[A, B] // = Rep[Rep[A] => Rep[B]]
 
   def lam2[A,B](f: Rep[A] => Rep[B]): A :~> B
   def app2[A,B](f: A :~> B, x: Rep[A]): Rep[B]
@@ -57,6 +57,8 @@ trait CBNCPSInterpreter[Res] extends Syntax2 {
 
   type K[T] = T => Res
   type Rep[T] = K[T] => Res
+
+  type :~>[A, B] = Rep[Rep[A] => Rep[B]]
 
   // the final continuation
   def runCont[T] : Rep[T]
