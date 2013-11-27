@@ -229,6 +229,35 @@ object TestDirectCompiler extends DirectCompiler with Examples {
     println(fac)
     assert(fac ==
 """prog { y0 => fix { y1 => lam { y2 => if (y2 != 0) y2 * y1(y2 + -1) else 1 } }(y0) }""")
+
+    val str = fac
+
+    import intp.util.ScalaCompile._
+
+    val src = 
+"""class Foo extends (Int => Int) {
+def prog(f: Int => Int): Int => Int = f
+def fix(f: (Int=>Int) => (Int=>Int)): Int => Int = { def f1(x:Int): Int = f(f1)(x); f1 }
+def lam(f: Int=>Int): Int => Int = f
+def apply(x:Int) = generated(x)
+val generated = $str
+}
+""".replace("$str",str)
+
+    println(src)
+
+    val f = compile[Int,Int](src, "Foo", Nil)
+
+    println(f(4))
+
+    assert(f(4) == 24)
+
+    /*
+    TODO:
+    add manifest to lam, fix, prog
+    add lam, fix, prog operators as prelude, or revise output to not use them
+    */
+
   }
 
 }
