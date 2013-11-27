@@ -283,13 +283,13 @@ trait LabeledSyntax extends Syntax {
 trait Labeling extends LabeledSyntax {
 
   abstract class Label
-  case object Root[A:Typ,B:Typ] extends Label
+  case class Root[A,B]()(implicit val arg: Typ[A], res: Typ[B]) extends Label
   case class InThen(up: Label) extends Label
   case class InElse(up: Label) extends Label
-  case class InLam[A:Typ,B:Typ](up: Label) extends Label
-  case class InFix[A:Typ,B:Typ](up: Label) extends Label
+  case class InLam[A,B](up: Label)(implicit val arg: Typ[A], res: Typ[B]) extends Label
+  case class InFix[A,B](up: Label)(implicit val arg: Typ[A], res: Typ[B]) extends Label
 
-  var label: Label = Root
+  var label: Label = null
   def block[A](l: Label)(b: => A) = {
     val save = label
     label = l
