@@ -283,7 +283,7 @@ trait LabeledSyntax extends Syntax {
 trait Labeling extends LabeledSyntax {
 
   abstract class Label
-  case object Root extends Label
+  case object Root[A:Typ,B:Typ] extends Label
   case class InThen(up: Label) extends Label
   case class InElse(up: Label) extends Label
   case class InLam[A:Typ,B:Typ](up: Label) extends Label
@@ -317,7 +317,7 @@ trait Labeling extends LabeledSyntax {
   }
 
   type Prog[A,B]
-  abstract override def prog[A:Typ,B:Typ](f: Rep[A] => Rep[B]): Prog[A,B] = super.prog(x => block(Root)(f(x)))
+  abstract override def prog[A:Typ,B:Typ](f: Rep[A] => Rep[B]): Prog[A,B] = super.prog(x => block(Root[A,B])(f(x)))
 }
 
 
