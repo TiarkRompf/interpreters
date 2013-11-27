@@ -181,13 +181,14 @@ trait DirectCompiler extends Syntax {
   def nesting(f: String => String)(x: String) = { // XX should this produce { y => f(y) } directly?
     nest += 1; try f(x) finally nest -= 1
   }
+  def typ[A:Typ]: String = implicitly[Typ[A]].s
 
-  def lam[A:Typ,B:Typ](f: String => String): String = s"lam { y$nest => ${ nesting(f)(s"y$nest")} }"
+  def lam[A:Typ,B:Typ](f: String => String): String = s"lam { y$nest: ${typ[A]} => ${ nesting(f)(s"y$nest")} }"
   def app[A:Typ,B:Typ](f: String, x: String): String = s"$f($x)"
-  def fix[A:Typ,B:Typ](f: String => String): String = s"fix { y$nest => ${ nesting(f)(s"y$nest")} }"
+  def fix[A:Typ,B:Typ](f: String => String): String = s"fix { y$nest: (${typ[A]}=>${typ[B]}) => ${ nesting(f)(s"y$nest")} }"
 
   type Prog[A,B] = String
-  def prog[A:Typ,B:Typ](f: String => String) = s"prog { y$nest => ${ nesting(f)(s"y$nest")} }"
+  def prog[A:Typ,B:Typ](f: String => String) = s"prog { y$nest: ${typ[A]} => ${ nesting(f)(s"y$nest")} }"
 
 }
 
@@ -231,21 +232,21 @@ object TestDirectCompiler extends DirectCompiler with Examples {
   def main(args: Array[String]): Unit = {
     println(fac)
     assert(fac ==
-"""prog { y0 => fix { y1 => lam { y2 => if (y2 != 0) y2 * y1(y2 + -1) else 1 } }(y0) }""")
+"""prog { y0: Int => fix { y1: (Int=>Int) => lam { y2: Int => if (y2 != 0) y2 * y1(y2 + -1) else 1 } }(y0) }""")
 
     val str = fac
 
     import intp.util.ScalaCompile._
 
     val src = 
-"""class Foo extends (Int => Int) {
-def prog(f: Int => Int): Int => Int = f
-def fix(f: (Int=>Int) => (Int=>Int)): Int => Int = { def f1(x:Int): Int = f(f1)(x); f1 }
-def lam(f: Int=>Int): Int => Int = f
+s"""class Foo extends (Int => Int) {
+def prog[A,B](f: A => B): A => B = f
+def fix[A,B](f: (A=>B) => (A=>B)): A => B = { def f1(x:A): B = f(f1)(x); f1 }
+def lam[A,B](f: A=>B): A=>B = f
 def apply(x:Int) = generated(x)
 val generated = $str
 }
-""".replace("$str",str)
+"""
 
     println(src)
 
