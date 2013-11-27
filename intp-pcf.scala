@@ -284,12 +284,10 @@ trait Labeling extends LabeledSyntax {
 
   abstract class Label
   case object Root extends Label
-  case class InExp(up: Label) extends Label
   case class InThen(up: Label) extends Label
   case class InElse(up: Label) extends Label
-  case class InLoop(up: Label) extends Label
-  case class InLam(up: Label) extends Label
-  case class InFix(up: Label) extends Label
+  case class InLam[A:Typ,B:Typ](up: Label) extends Label
+  case class InFix[A:Typ,B:Typ](up: Label) extends Label
 
   var label: Label = Root
   def block[A](l: Label)(b: => A) = {
@@ -310,12 +308,12 @@ trait Labeling extends LabeledSyntax {
 
   abstract override def lam[A:Typ,B:Typ](f: Rep[A] => Rep[B]): Rep[A=>B] = {
     val static = label
-    exp(super.lam(x => block(InLam(static))(f(x))))
+    exp(super.lam(x => block(InLam[A,B](static))(f(x))))
   }
 
   abstract override def fix[A:Typ,B:Typ](f: Rep[A=>B] => Rep[A=>B]): Rep[A=>B] = {
     val static = label
-    exp(super.fix(x => block(InFix(static))(f(x))))
+    exp(super.fix(x => block(InFix[A,B](static))(f(x))))
   }
 
   type Prog[A,B]
@@ -413,7 +411,7 @@ trait LambdaLiftLCompiler extends DirectCompiler with Labeling {
     val i = funs.length
     val args = (0 until nest) map (i => s"y$i") mkString(",")
     val static = label
-    val f1 = nesting(x => block(InLam(static))(f(x))) _
+    val f1 = nesting(x => block(InLam[A,B](static))(f(x))) _
     funs :+= s"def f$i($args)(y$nest) = ${ f1(s"y$nest")}\n"
     //funs :+= s"def f$i($args) = ${super.lam(f)}"
     exp(s"f$i($args)")
