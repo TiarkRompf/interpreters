@@ -445,7 +445,7 @@ object TestLambdaLiftLCompiler extends LambdaLiftLCompiler with Labeling with Ex
   def main(args: Array[String]): Unit = {
     println(fac)
     assert(fac ==
-"""def f0(y0,y1)(y2) = if (y2 != 0) y2 * y1(y2 + -1) else 1
+"""def f0(y0:Int,y1:Int)(y2:Int) = if (y2 != 0) y2 * y1(y2 + -1) else 1
 prog { y0: Int => fix { y1: (Int=>Int) => f0(y0,y1) }(y0) }""")
   }
 
@@ -457,7 +457,7 @@ object TestLLANFCompiler extends ANFCompiler with LambdaLiftLCompiler with Label
   def main(args: Array[String]): Unit = {
     println(fac)
     assert(fac ==
-"""def f0(y0,y1)(y2) = {
+"""def f0(y0:Int,y1:Int)(y2:Int) = {
 val x0 = if (y2 != 0) {
 val x0 = y2 + -1
 val x1 = y1(x0)
