@@ -260,7 +260,6 @@ val generated = $str
     /*
     TODO:
     - generalize prelude/compilation
-    - fix other tests
     - types for lambda lifting
     */
 
@@ -374,9 +373,9 @@ object TestANFCompiler extends ANFCompiler with Examples {
   def main(args: Array[String]): Unit = {
     println(fac)
     assert(fac ==
-"""prog { y0 => {
-val x0 = fix { y1 => {
-val x0 = lam { y2 => {
+"""prog { y0: Int => {
+val x0 = fix { y1: (Int=>Int) => {
+val x0 = lam { y2: Int => {
 val x0 = if (y2 != 0) {
 val x0 = y2 + -1
 val x1 = y1(x0)
@@ -429,7 +428,7 @@ object TestLambdaLiftLCompiler extends LambdaLiftLCompiler with Labeling with Ex
     println(fac)
     assert(fac ==
 """def f0(y0,y1)(y2) = if (y2 != 0) y2 * y1(y2 + -1) else 1
-prog { y0 => fix { y1 => f0(y0,y1) }(y0) }""")
+prog { y0: Int => fix { y1: (Int=>Int) => f0(y0,y1) }(y0) }""")
   }
 
 }
@@ -451,8 +450,8 @@ x2
 }
 x0
 }
-prog { y0 => {
-val x0 = fix { y1 => {
+prog { y0: Int => {
+val x0 = fix { y1: (Int=>Int) => {
 val x0 = f0(y0,y1)
 x0
 } }
