@@ -124,22 +124,23 @@ trait ASTCompiler extends Syntax {
   }
   // --------------------------------------------------------
 
-  def nat(c: Int) = Nat(c)
-  def plus(x: Exp, y: Exp) = Plus(x, y)
-  def times(x: Exp, y: Exp) = Times(x, y)
-  def ifnz[T](c: Exp, a: => Exp, b: => Exp) = Ifnz(c, a, b)
-  def lam[A, B](f: Exp => Exp): Exp = {
+  def nat(c: Int): Rep[Int] = Nat(c)
+  def plus(x: Exp, y: Exp): Rep[Int] = Plus(x, y)
+  def times(x: Exp, y: Exp): Rep[Int] = Times(x, y)
+  def ifnz[T](c: Exp, a: => Exp, b: => Exp): Rep[T] = Ifnz(c, a, b)
+  def lam[A,B](f: Exp => Exp): Rep[A=>B] = {
     val x = Id(s"y$nest")
     Lam(x, nesting(f)(x))
   }
-  def app[A, B](f: Exp, x: Exp) = App(f, x)
-  def fix[A, B](f: Exp => Exp) = {
+  def app[A,B](f: Exp, x: Exp): Rep[B] = App(f, x)
+  def fix[A,B](f: Exp => Exp): Rep[A => B] = {
     val x = Id(s"y$nest")
     Fix(Lam(x, nesting(f)(x)))
   }
 
+  // In fact, should be `eval` here
   type Prog[A,B] = Exp
-  def prog[A,B](f: Exp => Exp) = {
+  def prog[A,B](f: Rep[A] => Rep[B]): Prog[A, B] = {
       val x = Id(s"y$nest")
       Lam(x, nesting(f)(x))
   }
@@ -149,8 +150,8 @@ trait ASTCompiler extends Syntax {
 /**
  * Same as AST compiler, but with closure conversion
  */
-trait ClosureConvertingCompiler extends ASTCompiler {
-  // TODO
+trait ClosureConvertingCompiler extends ASTCompiler with Labeling {
+  // TODO: implement prog
 
 }
 
