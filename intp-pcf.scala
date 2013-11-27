@@ -407,12 +407,25 @@ trait LambdaLiftLCompiler extends DirectCompiler with Labeling {
 
   var funs: List[String] = Nil
 
+  def typeEnv(c: Label): List[Typ[_]] = c match {
+    case c @ Root()     => c.arg :: Nil
+    case c @ InLam(up)  => c.arg :: typeEnv(up)
+    case c @ InLam(up)  => c.arg :: typeEnv(up)
+    case c @ InFix(up)  => c.arg :: typeEnv(up)
+    case c @ InThen(up) => typeEnv(up)
+    case c @ InElse(up) => typeEnv(up)
+  }
+
   override def lam[A:Typ,B:Typ](f: String => String): String = {
     val i = funs.length
-    val args = (0 until nest) map (i => s"y$i") mkString(",")
     val static = label
+    val types = typeEnv(static) map (_.s)
+    assert(types.length == nest)
+    val syms = (0 until nest) map (i => s"y$i")
+    val parm = (syms,types).zipped map (_ + ":" + _)  mkString ","
+    val args = syms mkString ","
     val f1 = nesting(x => block(InLam[A,B](static))(f(x))) _
-    funs :+= s"def f$i($args)(y$nest) = ${ f1(s"y$nest")}\n"
+    funs :+= s"def f$i($parm)(y$nest:${typ[A]}) = ${ f1(s"y$nest")}\n"
     //funs :+= s"def f$i($args) = ${super.lam(f)}"
     exp(s"f$i($args)")
   }
