@@ -258,8 +258,9 @@ val generated = $str
 
     /*
     TODO:
-    add manifest to lam, fix, prog
-    add lam, fix, prog operators as prelude, or revise output to not use them
+    - generalize prelude/compilation
+    - fix other tests
+    - types for lambda lifting
     */
 
   }
