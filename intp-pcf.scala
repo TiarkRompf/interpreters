@@ -7,6 +7,13 @@ trait TypeSyntax {
 
   implicit def intType: Typ[Int] = Typ("Int")
   implicit def funType[A,B](implicit a:Typ[A], b:Typ[B]): Typ[A=>B] = Typ(s"$a => $b")
+
+  // Note on Scala syntax:
+  //   The A:Typ notation used below is syntactic sugar for an implicit parameter 
+  //   (think type class instance) of type Typ[A]. So 
+  //      lam[A:Typ,B:Typ](f: ...)
+  //   is equivalent to
+  //      lam[A,B](f: ...)(implicit a: Typ[A], b: Typ[B])
 }
 
 trait FOSyntax extends TypeSyntax {
