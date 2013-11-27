@@ -109,50 +109,51 @@ trait ASTCompiler extends Syntax {
   //TODO: Ilya - can we overcome this burden and generate it (semi-)-automatically?
 
   // Expressions
-  sealed abstract class Exp
-  case class Id(x: String) extends Exp
-  case class Nat(c: Int) extends Exp
-  case class Plus(a: Exp, b: Exp) extends Exp
-  case class Times(a: Exp, b: Exp) extends Exp
-  case class Ifnz(c: Exp, tb: Exp, eb: Exp) extends Exp
-  case class Lam(x: Id, b: Exp) extends Exp
-  case class App(t1: Exp, t2: Exp) extends Exp
-  case class Fix(t: Exp) extends Exp
+  sealed abstract class Exp[T: Typ]
+  case class Id[T: Typ](x: String) extends Exp[T]
+  case class Nat(c: Int) extends Exp[Int]
+  case class Plus(a: Exp[Int], b: Exp[Int]) extends Exp[Int]
+  case class Times(a: Exp[Int], b: Exp[Int]) extends Exp[Int]
+  case class Ifnz[T:Typ](c: Exp[Int], tb: Exp[T], eb: Exp[T]) extends Exp[T]
+  case class Lam[A:Typ,B:Typ](x: Id[A], b: Exp[B]) extends Exp[A => B]
+  case class App[A:Typ,B:Typ](t1: Exp[A=>B], t2: Exp[A]) extends Exp[B]
+  case class Fix[A:Typ,B:Typ](t: Exp[(A => B) => (A => B)]) extends Exp[A => B]
 
   sealed abstract class Value
   case class ValNat(c: Int) extends Value
-  case class ValFun(x: Id, body: Exp, env: Env) extends Value
+  case class ValFun[A:Typ,B:Typ](x: Id[A], body: Exp[B], env: Env) extends Value
 
-  type Env = Map[Id, Closure]
-  case class Closure(t: Exp, e: Env)
+  type Binding[T] = (Id[T], Closure[T])
+  type Env = Set[Binding[_]]
+  case class Closure[T](t: Exp[T], e: Env)
 
-  type Rep[_] = Exp
+  type Rep[T] = Exp[T]
 
   // --------------------------------------------------------
   var nest = 0
-  def nesting(f: Exp => Exp)(x: Exp) = {
+  def nesting[A, B](f: Exp[A] => Exp[B])(x: Exp[A]): Exp[B] = {
     nest += 1; try f(x) finally nest -= 1
   }
   // --------------------------------------------------------
 
   def nat(c: Int) = Nat(c)
-  def plus(x: Exp, y: Exp) = Plus(x, y)
-  def times(x: Exp, y: Exp) = Times(x, y)
-  def ifnz[T:Typ](c: Exp, a: => Exp, b: => Exp) = Ifnz(c, a, b)
-  def lam[A:Typ, B:Typ](f: Exp => Exp): Exp = {
-    val x = Id(s"y$nest")
+  def plus(x: Exp[Int], y: Exp[Int]) = Plus(x, y)
+  def times(x: Exp[Int], y: Exp[Int]) = Times(x, y)
+  def ifnz[T:Typ](c: Exp[Int], a: => Exp[T], b: => Exp[T]) = Ifnz(c, a, b)
+  def lam[A:Typ, B:Typ](f: Exp[A] => Exp[B]): Exp[A=>B] = {
+    val x = Id[A](s"y$nest")
     Lam(x, nesting(f)(x))
   }
-  def app[A:Typ, B:Typ](f: Exp, x: Exp) = App(f, x)
-  def fix[A:Typ, B:Typ](f: Exp => Exp) = {
-    val x = Id(s"y$nest")
+  def app[A:Typ, B:Typ](f: Exp[A=>B], x: Exp[A]): Exp[B] = App(f, x)
+  def fix[A:Typ, B:Typ](f: Exp[A => B] => Exp[A => B]): Exp[A=>B] = {
+    val x = Id[A => B](s"y$nest")
     Fix(Lam(x, nesting(f)(x)))
   }
 
   // In fact, should be `eval` here
-  type Prog[A,B] = Exp
-  def prog[A:Typ, B:Typ](f: Exp => Exp) = {
-      val x = Id(s"y$nest")
+  type Prog[A,B] = Exp[A => B]
+  def prog[A:Typ, B:Typ](f: Exp[A] => Exp[B]) = {
+      val x = Id[A](s"y$nest")
       Lam(x, nesting(f)(x))
   }
 
@@ -217,8 +218,8 @@ object TestASTCompiler extends ASTCompiler with Examples {
 
   def main(args: Array[String]): Unit = {
     println(fac)
-    assert(fac ==
-      Lam(Id("y0"), App(Fix(Lam(Id("y1"), Lam(Id("y2"), Ifnz(Id("y2"), Times(Id("y2"), App(Id("y1"), Plus(Id("y2"), Nat(-1)))), Nat(1))))), Id("y0"))))
+    assert(fac.toString ==
+      "Lam(Id(y0),App(Fix(Lam(Id(y1),Lam(Id(y2),Ifnz(Id(y2),Times(Id(y2),App(Id(y1),Plus(Id(y2),Nat(-1)))),Nat(1))))),Id(y0)))")
   }
 
 }
