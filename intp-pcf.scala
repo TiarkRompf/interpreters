@@ -2,33 +2,44 @@ package intp.pcf
 
 import scala.language.higherKinds
 
-trait FOSyntax {
+trait TypeSyntax {
+  case class Typ[T](s: String) { override def toString = s } // TODO: should be abstract type
+
+  implicit def intType: Typ[Int] = Typ("Int")
+  implicit def funType[A,B](implicit a:Typ[A], b:Typ[B]): Typ[A=>B] = Typ(s"$a => $b")
+}
+
+trait FOSyntax extends TypeSyntax {
   type Rep[T]
 
   def nat(c: Int): Rep[Int]
   def plus(x: Rep[Int], y: Rep[Int]): Rep[Int]
   def times(x: Rep[Int], y: Rep[Int]): Rep[Int]
-  def ifnz[T](c: Rep[Int], a: =>Rep[T], b: =>Rep[T]): Rep[T]
+  def ifnz[T:Typ](c: Rep[Int], a: =>Rep[T], b: =>Rep[T]): Rep[T]
 
-  def fix[A,B](f: Rep[A=>B] => Rep[A=>B]): Rep[A=>B]
+  def fix[A:Typ,B:Typ](f: Rep[A=>B] => Rep[A=>B]): Rep[A=>B]
 
   type Prog[A,B]
-  def prog[A,B](f: Rep[A] => Rep[B]): Prog[A,B]
+  def prog[A:Typ,B:Typ](f: Rep[A] => Rep[B]): Prog[A,B]
 }
 
 trait Syntax extends FOSyntax {
-  def lam[A,B](f: Rep[A] => Rep[B]): Rep[A=>B]
-  def app[A,B](f: Rep[A=>B], x: Rep[A]): Rep[B]
+  def lam[A:Typ,B:Typ](f: Rep[A] => Rep[B]): Rep[A=>B]
+  def app[A:Typ,B:Typ](f: Rep[A=>B], x: Rep[A]): Rep[B]
 }
 
 trait Syntax2 extends FOSyntax {
   // Abstract type for L-function (following Jacques' suggestion)
   type :~>[A, B] // = Rep[Rep[A] => Rep[B]]
 
-  def lam2[A,B](f: Rep[A] => Rep[B]): A :~> B
-  def app2[A,B](f: A :~> B, x: Rep[A]): Rep[B]
+  def lam2[A:Typ,B:Typ](f: Rep[A] => Rep[B]): A :~> B
+  def app2[A:Typ,B:Typ](f: A :~> B, x: Rep[A]): Rep[B]
 }
 
+
+
+
+  
 trait DirectInterpreter extends Syntax {
 
   type Rep[T] = T
@@ -36,17 +47,17 @@ trait DirectInterpreter extends Syntax {
   def nat(c: Int): Int = c
   def plus(a: Int, b: Int): Int = a + b
   def times(a: Int, b: Int): Int = a * b
-  def ifnz[T](c: Int, a: =>T, b: =>T): T = if (c != 0) a else b
+  def ifnz[T:Typ](c: Int, a: =>T, b: =>T): T = if (c != 0) a else b
 
-  def lam[A,B](f: A => B): A=>B = f
-  def app[A,B](f: A=>B, x: A): B = f(x)
-  def fix[A,B](f: (A=>B) => (A=>B)): A=>B = {
+  def lam[A:Typ,B:Typ](f: A => B): A=>B = f
+  def app[A:Typ,B:Typ](f: A=>B, x: A): B = f(x)
+  def fix[A:Typ,B:Typ](f: (A=>B) => (A=>B)): A=>B = {
     def f1(x:A): B = f(f1)(x)
     f1
   }
 
   type Prog[A,B] = A => B
-  def prog[A,B](f: A => B) = f
+  def prog[A:Typ,B:Typ](f: A => B) = f
 
 }
 
@@ -127,19 +138,19 @@ trait ASTCompiler extends Syntax {
   def nat(c: Int) = Nat(c)
   def plus(x: Exp, y: Exp) = Plus(x, y)
   def times(x: Exp, y: Exp) = Times(x, y)
-  def ifnz[T](c: Exp, a: => Exp, b: => Exp) = Ifnz(c, a, b)
-  def lam[A, B](f: Exp => Exp): Exp = {
+  def ifnz[T:Typ](c: Exp, a: => Exp, b: => Exp) = Ifnz(c, a, b)
+  def lam[A:Typ, B:Typ](f: Exp => Exp): Exp = {
     val x = Id(s"y$nest")
     Lam(x, nesting(f)(x))
   }
-  def app[A, B](f: Exp, x: Exp) = App(f, x)
-  def fix[A, B](f: Exp => Exp) = {
+  def app[A:Typ, B:Typ](f: Exp, x: Exp) = App(f, x)
+  def fix[A:Typ, B:Typ](f: Exp => Exp) = {
     val x = Id(s"y$nest")
     Fix(Lam(x, nesting(f)(x)))
   }
 
   type Prog[A,B] = Exp
-  def prog[A,B](f: Exp => Exp) = {
+  def prog[A:Typ, B:Typ](f: Exp => Exp) = {
       val x = Id(s"y$nest")
       Lam(x, nesting(f)(x))
   }
@@ -172,19 +183,19 @@ trait DirectCompiler extends Syntax {
   def nat(c: Int): String = s"$c"
   def plus(a: String, b: String): String = s"$a + $b"
   def times(a: String, b: String): String = s"$a * $b"
-  def ifnz[T](c: String, a: =>String, b: =>String): String = s"if ($c != 0) $a else $b"
+  def ifnz[T:Typ](c: String, a: =>String, b: =>String): String = s"if ($c != 0) $a else $b"
 
   var nest = 0
   def nesting(f: String => String)(x: String) = { // XX should this produce { y => f(y) } directly?
     nest += 1; try f(x) finally nest -= 1
   }
 
-  def lam[A,B](f: String => String): String = s"lam { y$nest => ${ nesting(f)(s"y$nest")} }"
-  def app[A,B](f: String, x: String): String = s"$f($x)"
-  def fix[A,B](f: String => String): String = s"fix { y$nest => ${ nesting(f)(s"y$nest")} }"
+  def lam[A:Typ,B:Typ](f: String => String): String = s"lam { y$nest => ${ nesting(f)(s"y$nest")} }"
+  def app[A:Typ,B:Typ](f: String, x: String): String = s"$f($x)"
+  def fix[A:Typ,B:Typ](f: String => String): String = s"fix { y$nest => ${ nesting(f)(s"y$nest")} }"
 
   type Prog[A,B] = String
-  def prog[A,B](f: String => String) = s"prog { y$nest => ${ nesting(f)(s"y$nest")} }"
+  def prog[A:Typ,B:Typ](f: String => String) = s"prog { y$nest => ${ nesting(f)(s"y$nest")} }"
 
 }
 
@@ -291,23 +302,23 @@ trait Labeling extends LabeledSyntax {
   abstract override def nat(c: Int): Rep[Int]                     = super.nat(c) // 'trivial' expression
   abstract override def plus(x: Rep[Int], y: Rep[Int]): Rep[Int]  = exp(super.plus(x,y))
   abstract override def times(x: Rep[Int], y: Rep[Int]): Rep[Int] = exp(super.times(x,y))
-  abstract override def app[A,B](f: Rep[A=>B], x: Rep[A]): Rep[B] = exp(super.app(f,x))
+  abstract override def app[A:Typ,B:Typ](f: Rep[A=>B], x: Rep[A]): Rep[B] = exp(super.app(f,x))
 
-  abstract override def ifnz[T](c: Rep[Int], a: =>Rep[T], b: =>Rep[T]): Rep[T]
+  abstract override def ifnz[T:Typ](c: Rep[Int], a: =>Rep[T], b: =>Rep[T]): Rep[T]
     = exp(super.ifnz(c, block(InThen(label))(a), block(InElse(label))(b)))
 
-  abstract override def lam[A,B](f: Rep[A] => Rep[B]): Rep[A=>B] = {
+  abstract override def lam[A:Typ,B:Typ](f: Rep[A] => Rep[B]): Rep[A=>B] = {
     val static = label
     exp(super.lam(x => block(InLam(static))(f(x))))
   }
 
-  abstract override def fix[A,B](f: Rep[A=>B] => Rep[A=>B]): Rep[A=>B] = {
+  abstract override def fix[A:Typ,B:Typ](f: Rep[A=>B] => Rep[A=>B]): Rep[A=>B] = {
     val static = label
     exp(super.fix(x => block(InFix(static))(f(x))))
   }
 
   type Prog[A,B]
-  abstract override def prog[A,B](f: Rep[A] => Rep[B]): Prog[A,B] = super.prog(x => block(Root)(f(x)))
+  abstract override def prog[A:Typ,B:Typ](f: Rep[A] => Rep[B]): Prog[A,B] = super.prog(x => block(Root)(f(x)))
 }
 
 
@@ -397,7 +408,7 @@ trait LambdaLiftLCompiler extends DirectCompiler with Labeling {
 
   var funs: List[String] = Nil
 
-  override def lam[A,B](f: String => String): String = {
+  override def lam[A:Typ,B:Typ](f: String => String): String = {
     val i = funs.length
     val args = (0 until nest) map (i => s"y$i") mkString(",")
     val static = label
@@ -409,9 +420,9 @@ trait LambdaLiftLCompiler extends DirectCompiler with Labeling {
 
   // TODO: fix
 
-  override def prog[A,B](f: String => String): String = {
+  override def prog[A:Typ,B:Typ](f: String => String): String = {
     funs = Nil
-    val r = super.prog(f)
+    val r = super.prog[A,B](f)
     s"${funs.mkString}$r"
   }
 }
