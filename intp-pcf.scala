@@ -280,6 +280,141 @@ object TestDirectCompiler extends DirectCompiler with ScalaLoader with Examples 
 }
 
 
+trait CPSCompiler extends Syntax {
+
+  type Rep[T] = String
+
+  //def shift(f: String => String) = f(s"k$nest") + s"} def k$nest { x =>"
+
+  def nat(c: Int) = s"$c"
+  def plus(a: Rep[Int], b: Rep[Int]) = { println(s"  x = $a + $b"); "x" }
+  def times(a: Rep[Int], b: Rep[Int])= { println(s"  x = $a * $b"); "x" }
+  def ifnz[T:Typ](c: Rep[Int], a: =>Rep[T], b: =>Rep[T]) = {
+    println(s"  if ($c != 0) fthen() else felse()")
+    //println(s"}")
+    println(s"def fthen() = {")
+    println(s"  fifnext($a)")
+    println(s"}")
+    println(s"def felse() = {")
+    println(s"  fifnext($b)")
+    println(s"}")
+    println(s"def fifnext(yif) = {")
+    "yif"
+  }
+
+  var nest = 0
+  def nesting(f: String => String)(x: String) = { // XX should this produce { y => f(y) } directly?
+    nest += 1; try f(x) finally nest -= 1
+  }
+  def typ[A:Typ]: String = implicitly[Typ[A]].s
+
+  def lam[A:Typ,B:Typ](f: String => String): String = {
+    println(s"def flam(ylam,klam) = {")
+    println(s"  klam(${ f("ylam") })")
+    println(s"}")
+
+    s"clos(flam)"
+  }
+
+  def app[A:Typ,B:Typ](f: String, x: String): String = {
+    println(s"  $f($x,fappnext)")
+    println(s"}")
+    println(s"def fappnext(yapp) = {")
+    "yapp"
+  }
+
+  def fix[A:Typ,B:Typ](f: String => String): String = {
+    println(s"def ffix(yfix,kfix) = {")
+    println(s"  kfix(${ f("yfix") })")
+    println(s"}")
+
+    s"fclos(ffix)"
+  }
+
+  type Prog[A,B] = String
+  def prog[A:Typ,B:Typ](f: String => String) = {
+    println(s"def main(ymain,kmain) = {")
+    println(s"kmain(${ f("ymain") })")
+    println("}")
+    "main(x,y => return y)"
+  }
+
+}
+
+object TestCPSCompiler extends CPSCompiler with Examples {
+
+  // tests
+
+  def main(args: Array[String]): Unit = {
+    println(fac)
+
+    def manual(x:Int): Int = {
+      type V = Int
+      type R = Unit
+      type K = V => R
+      type F = (V,K) => R
+      type KF = F => R
+
+      def clos(f:F) = f
+      def fclos(f:(F,KF)=>R): F = {
+        def f1(x:V,k:K):R = f(f1, f2 => f2(x,k))
+        f1
+      }
+
+      def main(ymain: V,kmain: K) = {
+        def ffix(yfix: F,kfix: KF): R = {
+          def flam(ylam: V,klam: K): R = {
+            if (ylam != 0) fthen() else felse()
+            def fthen() = {
+              val x = ylam + -1
+              yfix(x,fappnext)
+              def fappnext(yapp:V) = {
+                val x = ylam * yapp
+                fifnext(x)
+              }
+            }
+            def felse() = {
+              fifnext(1)
+            }
+            def fifnext(yif:V) = {
+              klam(yif)
+            }
+          }
+          kfix(clos(flam))
+        }
+        val r:F = fclos(ffix)
+        r(ymain,fappnext)
+        def fappnext(yapp:V) = {
+          kmain(yapp)
+        }
+      }
+      main(x,y => return y)
+      0
+    }
+
+    assert(manual(4) == 24)
+
+
+
+
+
+
+
+/*    assert(fac ==
+"""prog { y0: Int => fix { y1: (Int=>Int) => lam { y2: Int => if (y2 != 0) y2 * y1(y2 + -1) else 1 } }(y0) }""")
+*/
+    //val f = load[Int,Int](fac)
+    //assert(f(4) == 24)
+  }
+
+}
+
+
+
+
+
+
+
 trait LabeledSyntax extends Syntax {
   type Label
   def label: Label
