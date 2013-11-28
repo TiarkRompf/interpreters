@@ -303,9 +303,11 @@ trait CPSCompiler extends Syntax {
       emit("}")
     }
   }
-  def contn(sig: String) = {
-    emit(s"def $sig = {")
+  def contn(name: String)(body: String => String) = {
+    emit(body(s"f$name"))
+    emit(s"def f$name(y$name: V) = {")
     nest += 1
+    s"y$name"
   }
 
   // -----------
@@ -314,15 +316,21 @@ trait CPSCompiler extends Syntax {
   def plus(a: Rep[Int], b: Rep[Int]) = exp("xp", s"$a + $b")
   def times(a: Rep[Int], b: Rep[Int]) = exp("xt", s"$a * $b")
   def ifnz[T:Typ](c: Rep[Int], a: =>Rep[T], b: =>Rep[T]) = {
-    emit(s"if ($c != 0) fthen() else felse()")
-    block(s"fthen()") {
-      s"fifnext($a)"
+    contn("if") { k =>      
+      block(s"fthen()") {
+        s"$k($a)"
+      }
+      block(s"felse()") {
+        s"$k($b)"
+      }
+      s"if ($c != 0) fthen() else felse()"
     }
-    block(s"felse()") {
-      s"fifnext($b)"
+  }
+
+  def app[A:Typ,B:Typ](f: String, x: String): String = {
+    contn("app") { k =>
+      s"$f($x,$k)"
     }
-    contn(s"fifnext(yif: V)")
-    "yif"
   }
 
   def lam[A:Typ,B:Typ](f: String => String): String = {
@@ -330,13 +338,6 @@ trait CPSCompiler extends Syntax {
       s"klam(${ f("ylam") })"
     }
     s"clos(flam)"
-  }
-
-  def app[A:Typ,B:Typ](f: String, x: String): String = {
-    emit(s"$f($x,fappnext)")
-    //emit(s"}")
-    contn(s"fappnext(yapp: V)")
-    "yapp"
   }
 
   def fix[A:Typ,B:Typ](f: String => String): String = {
@@ -405,30 +406,32 @@ object TestCPSCompiler extends CPSCompiler with ScalaLoaderCPS with Examples {
     val res = fac
     val code = buf + res + "; -1"
 
+    println(code)
+
     assert(code ==
 """def main(ymain:V,kmain:K) = {
   def ffix(yfix:F,kfix:KF) = {
     def flam(ylam: V,klam: K) = {
-      if (ylam != 0) fthen() else felse()
       def fthen() = {
         val xp = ylam + -1
-        yfix(xp,fappnext)
-        def fappnext(yapp: V) = {
+        yfix(xp,fapp)
+        def fapp(yapp: V) = {
           val xt = ylam * yapp
-          fifnext(xt)
+          fif(xt)
         }
       }
       def felse() = {
-        fifnext(1)
+        fif(1)
       }
-      def fifnext(yif: V) = {
+      if (ylam != 0) fthen() else felse()
+      def fif(yif: V) = {
         klam(yif)
       }
     }
     kfix(clos(flam))
   }
-  fclos(ffix)(ymain,fappnext)
-  def fappnext(yapp: V) = {
+  fclos(ffix)(ymain,fapp)
+  def fapp(yapp: V) = {
     kmain(yapp)
   }
 }
