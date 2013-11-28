@@ -193,7 +193,7 @@ trait DirectCompiler extends Syntax {
 
   def lam[A:Typ,B:Typ](f: String => String): String = s"lam { y$nest: ${typ[A]} => ${ nesting(f)(s"y$nest")} }"
   def app[A:Typ,B:Typ](f: String, x: String): String = s"$f($x)"
-  def fix[A:Typ,B:Typ](f: String => String): String = s"fix { y$nest: ${typ[A=>B]} => ${ nesting(f)(s"y$nest")} }"
+  def fix[A:Typ,B:Typ](f: String => String): String = s"fix { y$nest: (${typ[A=>B]}) => ${ nesting(f)(s"y$nest")} }"
 
   type Prog[A,B] = String
   def prog[A:Typ,B:Typ](f: String => String) = s"prog { y$nest: ${typ[A]} => ${ nesting(f)(s"y$nest")} }"
@@ -384,7 +384,7 @@ object TestANFCompiler extends ANFCompiler with ScalaLoader with Examples {
     println(fac)
     assert(fac ==
 """prog { y0: Int => {
-val x0 = fix { y1: (Int=>Int) => {
+val x0 = fix { y1: (Int => Int) => {
 val x0 = lam { y2: Int => {
 val x0 = if (y2 != 0) {
 val x0 = y2 + -1
