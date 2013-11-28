@@ -193,7 +193,7 @@ trait DirectCompiler extends Syntax {
 
   def lam[A:Typ,B:Typ](f: String => String): String = s"lam { y$nest: ${typ[A]} => ${ nesting(f)(s"y$nest")} }"
   def app[A:Typ,B:Typ](f: String, x: String): String = s"$f($x)"
-  def fix[A:Typ,B:Typ](f: String => String): String = s"fix { y$nest: (${typ[A]}=>${typ[B]}) => ${ nesting(f)(s"y$nest")} }"
+  def fix[A:Typ,B:Typ](f: String => String): String = s"fix { y$nest: ${typ[A=>B]} => ${ nesting(f)(s"y$nest")} }"
 
   type Prog[A,B] = String
   def prog[A:Typ,B:Typ](f: String => String) = s"prog { y$nest: ${typ[A]} => ${ nesting(f)(s"y$nest")} }"
@@ -419,13 +419,14 @@ trait LambdaLiftLCompiler extends DirectCompiler with Labeling {
     case c @ Root()     => c.arg :: Nil
     case c @ InLam(up)  => c.arg :: typeEnv(up)
     case c @ InLam(up)  => c.arg :: typeEnv(up)
-    case c @ InFix(up)  => funType(c.arg,c.res) :: typeEnv(up)
+    case c @ InFix(up)  => funType(c.arg,c.res) /*c.arg*/ :: typeEnv(up)
     case c @ InThen(up) => typeEnv(up)
     case c @ InElse(up) => typeEnv(up)
   }
 
   override def lam[A:Typ,B:Typ](f: String => String): String = {
     val i = funs.length
+    funs :+= "<empty>"
     val static = label
     val types = typeEnv(static).reverse map (_.s)
     assert(types.length == nest)
@@ -433,12 +434,28 @@ trait LambdaLiftLCompiler extends DirectCompiler with Labeling {
     val parm = (syms,types).zipped map (_ + ":" + _)  mkString ","
     val args = syms mkString ","
     val f1 = nesting(x => block(InLam[A,B](static))(f(x))) _
-    funs :+= s"def f$i($parm)(y$nest:${typ[A]}) = ${ f1(s"y$nest")}\n"
+
+    val st = s"def f$i($parm)(y$nest:${typ[A]}) = ${ f1(s"y$nest")}\n"
+    funs = funs.updated(i,st)
     //funs :+= s"def f$i($args) = ${super.lam(f)}"
     exp(s"f$i($args)_")
   }
 
-  // TODO: fix
+  override def fix[A:Typ,B:Typ](f: String => String): String = { // TODO: eliminate code duplication
+    val i = funs.length
+    funs :+= "<empty>"
+    val static = label
+    val types = typeEnv(static).reverse map (_.s)
+    assert(types.length == nest)
+    val syms = (0 until nest) map (i => s"y$i")
+    val parm = (syms,types).zipped map (_ + ":" + _)  mkString ","
+    val args = syms mkString ","
+    val f1 = nesting(x => block(InFix[A,B](static))(f(x))) _
+    val st = s"def f$i($parm)(y$nest:${typ[A=>B]}): ${typ[A=>B]} = ${ f1(s"y$nest")}\n"
+    funs = funs.updated(i,st)
+    //funs :+= s"def f$i($args) = ${super.lam(f)}"
+    exp(s"fix(f$i($args))")
+  }
 
   override def prog[A:Typ,B:Typ](f: String => String): String = {
     funs = Nil
@@ -453,8 +470,9 @@ object TestLambdaLiftLCompiler extends LambdaLiftLCompiler with Labeling with Sc
   def main(args: Array[String]): Unit = {
     println(fac)
     assert(fac ==
-"""def f0(y0:Int,y1:Int => Int)(y2:Int) = if (y2 != 0) y2 * y1(y2 + -1) else 1
-prog { y0: Int => fix { y1: (Int=>Int) => f0(y0,y1)_ }(y0) }""")
+"""def f0(y0:Int)(y1:Int => Int): Int => Int = f1(y0,y1)_
+def f1(y0:Int,y1:Int => Int)(y2:Int) = if (y2 != 0) y2 * y1(y2 + -1) else 1
+prog { y0: Int => fix(f0(y0))(y0) }""")
 
     val f = load[Int,Int](fac)
     assert(f(4) == 24)
@@ -468,7 +486,11 @@ object TestLLANFCompiler extends ANFCompiler with LambdaLiftLCompiler with Label
   def main(args: Array[String]): Unit = {
     println(fac)
     assert(fac ==
-"""def f0(y0:Int,y1:Int => Int)(y2:Int) = {
+"""def f0(y0:Int)(y1:Int => Int): Int => Int = {
+val x0 = f1(y0,y1)_
+x0
+}
+def f1(y0:Int,y1:Int => Int)(y2:Int) = {
 val x0 = if (y2 != 0) {
 val x0 = y2 + -1
 val x1 = y1(x0)
@@ -480,10 +502,7 @@ x2
 x0
 }
 prog { y0: Int => {
-val x0 = fix { y1: (Int=>Int) => {
-val x0 = f0(y0,y1)_
-x0
-} }
+val x0 = fix(f0(y0))
 val x1 = x0(y0)
 x1
 } }""")
