@@ -517,7 +517,7 @@ x1
 
 TODO:
 + ScalaCompile: actually run stuff -> debugging
-- add TypeRep to emit type annotations
++ add TypeRep to emit type annotations
 - defunctionalization: replace currying in
   lambda-lift by data types and dispatch method
 - CPS conversion: shift/reset
