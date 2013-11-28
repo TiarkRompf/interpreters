@@ -685,16 +685,19 @@ x1
 TODO:
 + ScalaCompile: actually run stuff -> debugging
 + add TypeRep to emit type annotations
-- defunctionalization: replace currying in
-  lambda-lift by data types and dispatch method
-- CPS conversion: shift/reset
++ CPS conversion: shift/reset
     - if/else
     - function calls
+- defunctionalization: replace currying in
+  lambda-lift by data types and dispatch method
 - defunctionalize continuations: remove need for stack,
   obtain plain state transition system
 - analysis via abstract domain
     - either interpret low-level program, or
     - generate code to perform analysis
+- what about syntactic optimizations:
+    - cps administrative redexes
+    - lambda lift unused vars
 */
 
 //test
