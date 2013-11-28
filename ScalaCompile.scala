@@ -51,7 +51,7 @@ object ScalaCompile {
 
   var dumpGeneratedCode = false
 
-  def compile[A:Manifest,B:Manifest](source: String, className: String, staticData: List[(AnyRef,Class[_])]): A=>B = {
+  def compile[A,B](source: String, className: String, staticData: List[(AnyRef,Class[_])]): A=>B = {
     if (this.compiler eq null)
       setupCompiler()
     

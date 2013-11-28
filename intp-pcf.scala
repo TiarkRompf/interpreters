@@ -232,8 +232,39 @@ object TestASTCompiler extends ASTCompiler with Examples {
 }
 
 
+trait ScalaLoader extends DirectCompiler {
 
-object TestDirectCompiler extends DirectCompiler with Examples {
+  def clazz(name: String, parent: String)(body: => String) = 
+s"""class $name extends $parent {
+$body
+}
+"""
+
+  def prelude(body: => String) = 
+s"""def prog[A,B](f: A => B): A => B = f
+def fix[A,B](f: (A=>B) => (A=>B)): A => B = { def f1(x:A): B = f(f1)(x); f1 }
+def lam[A,B](f: A=>B): A=>B = f
+$body"""
+
+  def main[A:Typ,B:Typ](body: => String) = 
+s"""def apply(x: ${typ[A]}) = generated(x)
+val generated = {
+$body 
+}"""
+
+  def load[A:Typ,B:Typ](code: String): A=>B = { // might just override prog
+    import intp.util.ScalaCompile
+    val name = s"Gen${ ScalaCompile.compileCount }"
+    val src = clazz(name, s"(${typ[A]} => ${typ[B]})")(prelude(main[A,B](code)))
+
+    ScalaCompile.dumpGeneratedCode = true
+    ScalaCompile.compile[A,B](src, name, Nil)
+  }
+
+}
+
+
+object TestDirectCompiler extends DirectCompiler with ScalaLoader with Examples {
 
   // tests
 
@@ -242,34 +273,8 @@ object TestDirectCompiler extends DirectCompiler with Examples {
     assert(fac ==
 """prog { y0: Int => fix { y1: (Int=>Int) => lam { y2: Int => if (y2 != 0) y2 * y1(y2 + -1) else 1 } }(y0) }""")
 
-    val str = fac
-
-    import intp.util.ScalaCompile._
-
-    val src = 
-s"""class Foo extends (Int => Int) {
-def prog[A,B](f: A => B): A => B = f
-def fix[A,B](f: (A=>B) => (A=>B)): A => B = { def f1(x:A): B = f(f1)(x); f1 }
-def lam[A,B](f: A=>B): A=>B = f
-def apply(x:Int) = generated(x)
-val generated = $str
-}
-"""
-
-    println(src)
-
-    val f = compile[Int,Int](src, "Foo", Nil)
-
-    println(f(4))
-
+    val f = load[Int,Int](fac)
     assert(f(4) == 24)
-
-    /*
-    TODO:
-    - generalize prelude/compilation
-    - types for lambda lifting
-    */
-
   }
 
 }
@@ -286,8 +291,8 @@ trait Labeling extends LabeledSyntax {
   case class Root[A,B]()(implicit val arg: Typ[A], res: Typ[B]) extends Label
   case class InThen(up: Label) extends Label
   case class InElse(up: Label) extends Label
-  case class InLam[A,B](up: Label)(implicit val arg: Typ[A], res: Typ[B]) extends Label
-  case class InFix[A,B](up: Label)(implicit val arg: Typ[A], res: Typ[B]) extends Label
+  case class InLam[A,B](up: Label)(implicit val arg: Typ[A], val res: Typ[B]) extends Label
+  case class InFix[A,B](up: Label)(implicit val arg: Typ[A], val res: Typ[B]) extends Label
 
   var label: Label = null
   def block[A](l: Label)(b: => A) = {
@@ -372,7 +377,7 @@ trait ANFCompiler extends DirectCompiler with Labeling {
     }
 }
 
-object TestANFCompiler extends ANFCompiler with Examples {
+object TestANFCompiler extends ANFCompiler with ScalaLoader with Examples {
   // tests
 
   def main(args: Array[String]): Unit = {
@@ -396,6 +401,9 @@ x0
 val x1 = x0(y0)
 x1
 } }""")
+
+    val f = load[Int,Int](fac)
+    assert(f(4) == 24)
   }
 
 }
@@ -411,7 +419,7 @@ trait LambdaLiftLCompiler extends DirectCompiler with Labeling {
     case c @ Root()     => c.arg :: Nil
     case c @ InLam(up)  => c.arg :: typeEnv(up)
     case c @ InLam(up)  => c.arg :: typeEnv(up)
-    case c @ InFix(up)  => c.arg :: typeEnv(up)
+    case c @ InFix(up)  => funType(c.arg,c.res) :: typeEnv(up)
     case c @ InThen(up) => typeEnv(up)
     case c @ InElse(up) => typeEnv(up)
   }
@@ -419,7 +427,7 @@ trait LambdaLiftLCompiler extends DirectCompiler with Labeling {
   override def lam[A:Typ,B:Typ](f: String => String): String = {
     val i = funs.length
     val static = label
-    val types = typeEnv(static) map (_.s)
+    val types = typeEnv(static).reverse map (_.s)
     assert(types.length == nest)
     val syms = (0 until nest) map (i => s"y$i")
     val parm = (syms,types).zipped map (_ + ":" + _)  mkString ","
@@ -427,7 +435,7 @@ trait LambdaLiftLCompiler extends DirectCompiler with Labeling {
     val f1 = nesting(x => block(InLam[A,B](static))(f(x))) _
     funs :+= s"def f$i($parm)(y$nest:${typ[A]}) = ${ f1(s"y$nest")}\n"
     //funs :+= s"def f$i($args) = ${super.lam(f)}"
-    exp(s"f$i($args)")
+    exp(s"f$i($args)_")
   }
 
   // TODO: fix
@@ -439,25 +447,28 @@ trait LambdaLiftLCompiler extends DirectCompiler with Labeling {
   }
 }
 
-object TestLambdaLiftLCompiler extends LambdaLiftLCompiler with Labeling with Examples {
+object TestLambdaLiftLCompiler extends LambdaLiftLCompiler with Labeling with ScalaLoader with Examples {
   // tests
 
   def main(args: Array[String]): Unit = {
     println(fac)
     assert(fac ==
-"""def f0(y0:Int,y1:Int)(y2:Int) = if (y2 != 0) y2 * y1(y2 + -1) else 1
-prog { y0: Int => fix { y1: (Int=>Int) => f0(y0,y1) }(y0) }""")
+"""def f0(y0:Int,y1:Int => Int)(y2:Int) = if (y2 != 0) y2 * y1(y2 + -1) else 1
+prog { y0: Int => fix { y1: (Int=>Int) => f0(y0,y1)_ }(y0) }""")
+
+    val f = load[Int,Int](fac)
+    assert(f(4) == 24)
   }
 
 }
 
-object TestLLANFCompiler extends ANFCompiler with LambdaLiftLCompiler with Labeling with Examples {
+object TestLLANFCompiler extends ANFCompiler with LambdaLiftLCompiler with Labeling with ScalaLoader with Examples {
   // tests
 
   def main(args: Array[String]): Unit = {
     println(fac)
     assert(fac ==
-"""def f0(y0:Int,y1:Int)(y2:Int) = {
+"""def f0(y0:Int,y1:Int => Int)(y2:Int) = {
 val x0 = if (y2 != 0) {
 val x0 = y2 + -1
 val x1 = y1(x0)
@@ -470,12 +481,15 @@ x0
 }
 prog { y0: Int => {
 val x0 = fix { y1: (Int=>Int) => {
-val x0 = f0(y0,y1)
+val x0 = f0(y0,y1)_
 x0
 } }
 val x1 = x0(y0)
 x1
 } }""")
+
+    val f = load[Int,Int](fac)
+    assert(f(4) == 24)
   }
 
 }
