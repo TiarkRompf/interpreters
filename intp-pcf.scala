@@ -289,23 +289,29 @@ trait CPSCompiler extends Syntax {
   var nest = 0
 
   var buf = ""
+
   def emit(x: String) = buf = buf + ("  "*nest) + x + "\n"
+
+  def envstr(e: List[(String,String)]) = 
+    (e map (p => p._1 + ":" + p._2) mkString ",", e map (p => p._1) mkString ",")
 
   def exp(x: String, y: String) = { emit(s"val $x = $y"); x }
 
-  def block(sig: String)(body: => String) = {
+  def block(name: String, args: List[(String,String)])(body: => String) = {
     val save = nest
-    emit(s"def $sig = {")
+    val (mparm,margs) = envstr(args)
+    emit(s"def $name$nest($mparm) = {")
     nest += 1
     emit(body)
     while (nest > save) {
       nest -= 1
       emit("}")
     }
+    s"$name$nest"
   }
   def contn(name: String)(body: String => String) = {
-    emit(body(s"f$name"))
-    emit(s"def f$name(y$name: V) = {")
+    emit(body(s"f$name$nest"))
+    emit(s"def f$name$nest(y$name: V) = {")
     nest += 1
     s"y$name"
   }
@@ -317,13 +323,13 @@ trait CPSCompiler extends Syntax {
   def times(a: Rep[Int], b: Rep[Int]) = exp("xt", s"$a * $b")
   def ifnz[T:Typ](c: Rep[Int], a: =>Rep[T], b: =>Rep[T]) = {
     contn("if") { k =>      
-      block(s"fthen()") {
+      val f1 = block(s"fthen",Nil) {
         s"$k($a)"
       }
-      block(s"felse()") {
+      val f2 = block(s"felse",Nil) {
         s"$k($b)"
       }
-      s"if ($c != 0) fthen() else felse()"
+      s"if ($c != 0) $f1() else $f2()"
     }
   }
 
@@ -334,28 +340,72 @@ trait CPSCompiler extends Syntax {
   }
 
   def lam[A:Typ,B:Typ](f: String => String): String = {
-    block(s"flam(ylam: V,klam: K)") {
+    val f1 = block(s"flam", List(("ylam", "V"),("klam", "K"))) {
       s"klam(${ f("ylam") })"
     }
-    s"clos(flam)"
+    s"clos($f1)"
   }
 
   def fix[A:Typ,B:Typ](f: String => String): String = {
-    block(s"ffix(yfix:F,kfix:KF)") {
+    val f1 = block(s"ffix", List(("yfix","F"),("kfix","KF"))) {
       s"kfix(${ f("yfix") })"
     }
-    s"fclos(ffix)"
+    s"fclos($f1)"
   }
 
   type Prog[A,B] = String
   def prog[A:Typ,B:Typ](f: String => String) = {
-    block(s"main(ymain:V,kmain:K)") {
+    val f1 = block(s"main", List(("ymain","V"),("kmain","K"))) {
       s"kmain(${ f("ymain") })"
     }
-    "main(x,y => return y)"
+    s"$f1(x,y => return y)"
   }
 
 }
+
+trait CPSLLCompiler extends CPSCompiler {
+
+  // perform lambda lifting
+
+  var env: List[List[(String,String)]] = Nil
+
+  var bbuf = ""
+  override def emit(x: String) = bbuf = bbuf + x + "\n"
+
+  override def block(name: String, args: List[(String,String)])(body: => String) = {
+    val bsave = bbuf
+    bbuf = ""
+    val save = nest
+    val (eparm,eargs) = envstr(env.reverse.flatten)
+    val (mparm,margs) = envstr(args)
+    emit(s"def $name$nest($eparm)($mparm) = {")
+    nest += 1
+    env = args::env
+    emit(body)
+    nest -= 1
+    env = env.tail
+    emit("}")
+    buf = buf + bbuf
+    bbuf = bsave
+    s"$name$nest($eargs)"
+  }
+  override def contn(name: String)(body: String => String) = {
+    val (eparm,eargs) = envstr(env.reverse.flatten)
+    emit(body(s"f$name${nest-1}($eargs)"))
+    nest -= 1
+    env = env.tail
+    emit("}")
+    buf = buf + bbuf
+    bbuf = ""
+    emit(s"def f$name$nest($eparm)(y$name: V) = {")
+    nest += 1
+    env = List((s"y$name","V"))::env
+    s"y$name"
+  }
+
+}
+
+
 
 
 trait ScalaLoaderCPS extends CPSCompiler {
@@ -383,7 +433,7 @@ $body"""
 
   def main[A:Typ,B:Typ](body: => String) = 
 s"""def apply(x: ${typ[A]}): ${typ[B]} = {
-$body 
+$body
 }"""
 
   def load[A:Typ,B:Typ](code: String) = {
@@ -409,42 +459,85 @@ object TestCPSCompiler extends CPSCompiler with ScalaLoaderCPS with Examples {
     println(code)
 
     assert(code ==
-"""def main(ymain:V,kmain:K) = {
-  def ffix(yfix:F,kfix:KF) = {
-    def flam(ylam: V,klam: K) = {
-      def fthen() = {
+"""def main0(ymain:V,kmain:K) = {
+  def ffix1(yfix:F,kfix:KF) = {
+    def flam2(ylam:V,klam:K) = {
+      def fthen3() = {
         val xp = ylam + -1
-        yfix(xp,fapp)
-        def fapp(yapp: V) = {
+        yfix(xp,fapp4)
+        def fapp4(yapp: V) = {
           val xt = ylam * yapp
-          fif(xt)
+          fif3(xt)
         }
       }
-      def felse() = {
-        fif(1)
+      def felse3() = {
+        fif3(1)
       }
-      if (ylam != 0) fthen() else felse()
-      def fif(yif: V) = {
+      if (ylam != 0) fthen3() else felse3()
+      def fif3(yif: V) = {
         klam(yif)
       }
     }
-    kfix(clos(flam))
+    kfix(clos(flam2))
   }
-  fclos(ffix)(ymain,fapp)
-  def fapp(yapp: V) = {
+  fclos(ffix1)(ymain,fapp1)
+  def fapp1(yapp: V) = {
     kmain(yapp)
   }
 }
-main(x,y => return y); -1""")
+main0(x,y => return y); -1""")
 
 
     val f = load[Int,Int](code)
     assert(f(4) == 24)
   }
-
 }
 
+object TestCPSLLCompiler extends CPSLLCompiler with ScalaLoaderCPS with Examples {
 
+  // tests
+
+  def main(args: Array[String]): Unit = {
+
+    val res = fac
+    val code = buf + res + "; -1"
+
+    println(code)
+
+    assert(code ==
+"""def fthen3(ymain:V,kmain:K,yfix:F,kfix:KF,ylam:V,klam:K)() = {
+val xp = ylam + -1
+yfix(xp,fapp3(ymain,kmain,yfix,kfix,ylam,klam))
+}
+def fapp3(ymain:V,kmain:K,yfix:F,kfix:KF,ylam:V,klam:K)(yapp: V) = {
+val xt = ylam * yapp
+fif2(ymain,kmain,yfix,kfix,ylam,klam)(xt)
+}
+def felse3(ymain:V,kmain:K,yfix:F,kfix:KF,ylam:V,klam:K)() = {
+fif2(ymain,kmain,yfix,kfix,ylam,klam)(1)
+}
+def flam2(ymain:V,kmain:K,yfix:F,kfix:KF)(ylam:V,klam:K) = {
+if (ylam != 0) fthen3(ymain,kmain,yfix,kfix,ylam,klam)() else felse3(ymain,kmain,yfix,kfix,ylam,klam)()
+}
+def fif2(ymain:V,kmain:K,yfix:F,kfix:KF,ylam:V,klam:K)(yif: V) = {
+klam(yif)
+}
+def ffix1(ymain:V,kmain:K)(yfix:F,kfix:KF) = {
+kfix(clos(flam2(ymain,kmain,yfix,kfix)))
+}
+def main0()(ymain:V,kmain:K) = {
+fclos(ffix1(ymain,kmain))(ymain,fapp0(ymain,kmain))
+}
+def fapp0(ymain:V,kmain:K)(yapp: V) = {
+kmain(yapp)
+}
+main0()(x,y => return y); -1""")
+
+
+    val f = load[Int,Int](code)
+    assert(f(4) == 24)
+  }
+}
 
 
 
