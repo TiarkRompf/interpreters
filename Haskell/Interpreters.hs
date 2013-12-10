@@ -1,8 +1,8 @@
-{-# LANGUAGE TypeFamilies, ConstraintKinds, TypeSynonymInstances, FlexibleInstances,
+{-# LANGUAGE TypeFamilies, ConstraintKinds, TypeSynonymInstances, 
+    FlexibleInstances, RankNTypes,
       DeriveFunctor #-}
 module Interpreters where
 
--- import Control.Applicative
 import Control.Monad
 import qualified Data.Function as F
 import GHC.Exts
@@ -41,15 +41,15 @@ instance Expr R where
   times_ = liftA2 (*)
 
 instance Func R where
-  lam f = pure (unR . f . R)
-  app f x = f <*> x
+  lam f = pure f
+  app f x = (unR f) x
   fix = join $ (fmap <*> (return F.fix))
 
 instance IfNZ R where
   ifNonZero = liftA3 (ifNZ)
 
-tester :: (() -> R (a ->  b)) -> (a -> b)
-tester f = unR $ f ()
+tester :: (() -> R (R a ->  R b)) -> (a -> b)
+tester f = unR . (unR $ f ()) . R
 
 -- and it works (will be translated to a unit test later)
 test1 = ((tester fac)(4) == 24 )
@@ -107,15 +107,38 @@ test2 = (testersc fac ) ==
    "(\\y0 -> fix (\\y1 -> (\\y2 -> if (not (y2) == 0) then y2 * y1 (y2 + (-1)) else 1)) y0)" 
 
 -------------------------------------------------
--- Trace that we travel parts of the syntax
+-- CBN CPS Interpreter
+newtype CPS t = CPS (forall res. (t -> res) -> res)
+unCPS (CPS x) = x
 
-data Label = Root | InThen | InElse | InLam | InFix  deriving Show
+instance Functor CPS where
+  fmap f (CPS t) = CPS $ \k -> t (k . f)
+
+instance MyApp CPS where
+  type Ctx CPS a = ()
+  pure a = CPS ($ a)
+  (CPS f) <*> (CPS a) = CPS $ \k -> f (\f' -> a (\a' -> k $ f' a'))
+
+instance Expr CPS where
+  int_ = pure
+  plus_ = liftA2 (+)
+  times_ = liftA2 (*)
+
+instance Func CPS where
+  lam f = pure f
+  app f x = CPS $ \k -> (unCPS f) (\f' -> unCPS (f' x) k)
+  fix = join $ (fmap <*> (return F.fix))
+
+instance IfNZ CPS where
+  ifNonZero = liftA3 (ifNZ)
+
+-------------------------------------------------
+-- Trace that we travel parts of the syntax
 
 newtype Trace repr a = TR ([Label] -> ([Label], repr a))
 unTR (TR x) = x
 
 pureTR x = TR $ \l -> (l,x)
-runTR l tr = snd $ unTR tr l
 
 liftTR2 :: (repr a -> repr b -> repr c) -> Trace repr a -> Trace repr b -> Trace repr c
 liftTR2 f = \x y -> TR $ \l ->
@@ -128,15 +151,16 @@ instance (Expr repr) => Expr (Trace repr) where
   plus_ = liftTR2 (plus_)
   times_ = liftTR2 (times_)
 
+{-
 instance (Func repr) => Func (Trace repr) where
   lam f = TR $ \l ->
-            let g x = runTR l $ f (pureTR x) in
+            let h =  \x -> unTR (f (pureTR x)) l in
+            let g = snd . h in
             ([InLam] ++ l, lam g)
   app = liftTR2 app
   fix f = TR $ \l ->
-            let g x = runTR l $ f (pureTR x) in
-            ([InFix] ++ l, Language.fix g)
-{-
+            let g x = unTR (f (pureTR x)) l in
+            ([InFix] ++ l, Language.fix (snd . g))
 
 instance IfNZ repr => IfNZ (MW repr) where
   ifNonZero (MW b) (MW tb) (MW eb) = MW $ 
