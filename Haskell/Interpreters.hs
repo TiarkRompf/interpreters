@@ -150,6 +150,10 @@ instance Func CPS where
 instance IfNZ CPS where
   ifNonZero = liftA3 (ifNZ)
 
+instance Program CPS where
+  type Prog CPS a b = (a -> b)
+  prog f = \a -> (unCPS $ f (pure a)) id
+
 -------------------------------------------------
 -- Trace that we travel parts of the syntax
 
