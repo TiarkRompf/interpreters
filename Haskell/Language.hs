@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, ConstraintKinds #-}
+{-# LANGUAGE MultiParamTypeClasses, ConstraintKinds, TypeFamilies #-}
 module Language where
 
 -- The core components under our language
@@ -15,6 +15,11 @@ class Func rep where
   app :: rep (rep a -> rep b) -> (rep a -> rep b)
   fix :: (rep a -> rep a) -> rep a
   
+-- a program is usually a special case of a lambda term
+class Program rep where
+  type Prog rep a b 
+  prog :: (rep a -> rep b) -> Prog rep a b
+
 type Syntax rep = (Expr rep, Func rep, IfNZ rep)
 
 --

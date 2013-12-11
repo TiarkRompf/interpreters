@@ -10,9 +10,14 @@ import GHC.Exts
 import Language
 import Examples
 
--- helpful:
+-------------------------------------------------
+-- Some helpful definitions:
+-- a ternary, functional version of if-then-else
 ifNZ x tb eb = if (not (x == 0)) then tb else eb
 
+-- A version of Applicative parametrized by a constraint
+-- This allows, for example, a String compiler to use
+-- Show.
 class MyApp f where
   type Ctx f a :: Constraint
   pure :: Ctx f a => a -> f a
@@ -26,6 +31,9 @@ instance MyApp ((->) a) where
   pure x = \_ -> x
   f <*> x = \t -> (f t) (x t)
 
+class ZigZag rep where
+  demote :: (rep a -> rep b) -> (a -> b)
+
 -------------------------------------------------
 -- Direct interpreter
 newtype R a = R {unR :: a} deriving (Show, Functor)
@@ -33,7 +41,7 @@ newtype R a = R {unR :: a} deriving (Show, Functor)
 instance MyApp R where
   type Ctx R a = ()
   pure = R
-  (R f) <*> (R x) = R $ f x
+  f <*> x = R $ (unR f) (unR x)
 
 instance Expr R where
   int_ = pure
@@ -48,8 +56,12 @@ instance Func R where
 instance IfNZ R where
   ifNonZero = liftA3 (ifNZ)
 
+instance Program R where
+  type Prog R a b = a -> b
+  prog f = unR . f . R
+
 tester :: (() -> R (R a ->  R b)) -> (a -> b)
-tester f = unR . (unR $ f ()) . R
+tester f = prog (unR $ f ())
 
 -- and it works (will be translated to a unit test later)
 test1 = ((tester fac)(4) == 24 )
@@ -82,6 +94,7 @@ instance MyApp SC where
   f <*> x = SC (\n -> let (f1, n1) = s f n
                           (x1, n2) = s x n1
                       in (f1 ++ " " ++ x1, n2))
+
 instance Expr SC where
   int_ = \n -> if n < 0 then SC (\n1 -> ("(" ++ (show n) ++ ")", n1))  else pure n
   plus_ = liftsc2 (\x y -> "(" ++ x ++ " + " ++ y ++ ")")
@@ -100,6 +113,10 @@ instance Func SC where
 
 instance IfNZ SC where
   ifNonZero = liftsc3 (\x y z -> "if (not (" ++ x ++ ") == 0) then " ++ y ++ " else " ++ z)
+
+instance Program SC where
+  type Prog SC a b = String
+  prog f = fst $ s (f (SC $ \n -> ("y",n))) 0
 
 testersc f = fst $ s (f ()) 0
 
