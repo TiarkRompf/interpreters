@@ -60,8 +60,9 @@ instance Program R where
   type Prog R a b = a -> b
   prog f = unR . f . R
 
-tester :: (() -> R (R a ->  R b)) -> (a -> b)
-tester f = prog (unR $ f ())
+-- uses Haskell's laziness
+tester :: R (R a ->  R b) -> (a -> b)
+tester = prog . unR
 
 -- and it works (will be translated to a unit test later)
 test1 = ((tester fac)(4) == 24 )
@@ -118,9 +119,9 @@ instance Program SC where
   type Prog SC a b = String
   prog f = fst $ s (f (SC $ \n -> ("y",n))) 0
 
-testersc f = fst $ s (f ()) 0
+testersc f = fst $ s f 0
 
-test2 = (testersc fac ) == 
+test2 = testersc fac == 
    "(\\y0 -> fix (\\y1 -> (\\y2 -> if (not (y2) == 0) then y2 * y1 (y2 + (-1)) else 1)) y0)" 
 
 -------------------------------------------------
