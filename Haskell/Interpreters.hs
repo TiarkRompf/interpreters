@@ -1,7 +1,8 @@
-{-# LANGUAGE TypeFamilies, ConstraintKinds #-}
+{-# LANGUAGE TypeFamilies, ConstraintKinds, TypeSynonymInstances, 
+    FlexibleInstances, RankNTypes,
+      DeriveFunctor #-}
 module Interpreters where
 
--- import Control.Applicative
 import Control.Monad
 import qualified Data.Function as F
 import GHC.Exts
@@ -9,9 +10,14 @@ import GHC.Exts
 import Language
 import Examples
 
--- helpful:
+-------------------------------------------------
+-- Some helpful definitions:
+-- a ternary, functional version of if-then-else
 ifNZ x tb eb = if (not (x == 0)) then tb else eb
 
+-- A version of Applicative parametrized by a constraint
+-- This allows, for example, a String compiler to use
+-- Show.
 class MyApp f where
   type Ctx f a :: Constraint
   pure :: Ctx f a => a -> f a
@@ -25,17 +31,17 @@ instance MyApp ((->) a) where
   pure x = \_ -> x
   f <*> x = \t -> (f t) (x t)
 
+class ZigZag rep where
+  demote :: (rep a -> rep b) -> (a -> b)
+
 -------------------------------------------------
 -- Direct interpreter
-newtype R a = R {unR :: a} deriving (Show)
-
-instance Functor R where
-  fmap f (R x) = R (f x)
+newtype R a = R {unR :: a} deriving (Show, Functor)
 
 instance MyApp R where
   type Ctx R a = ()
   pure = R
-  (R f) <*> (R x) = R $ f x
+  f <*> x = R $ (unR f) (unR x)
 
 instance Expr R where
   int_ = pure
@@ -43,15 +49,20 @@ instance Expr R where
   times_ = liftA2 (*)
 
 instance Func R where
-  lam f = pure (unR . f . R)
-  app f x = f <*> x
+  lam f = pure f
+  app f x = (unR f) x
   fix = join $ (fmap <*> (return F.fix))
 
 instance IfNZ R where
   ifNonZero = liftA3 (ifNZ)
 
-tester :: (() -> R (a ->  b)) -> (a -> b)
-tester f = unR $ f ()
+instance Program R where
+  type Prog R a b = a -> b
+  prog f = unR . f . R
+
+-- uses Haskell's laziness
+tester :: R (R a ->  R b) -> (a -> b)
+tester = prog . unR
 
 -- and it works (will be translated to a unit test later)
 test1 = ((tester fac)(4) == 24 )
@@ -84,6 +95,7 @@ instance MyApp SC where
   f <*> x = SC (\n -> let (f1, n1) = s f n
                           (x1, n2) = s x n1
                       in (f1 ++ " " ++ x1, n2))
+
 instance Expr SC where
   int_ = \n -> if n < 0 then SC (\n1 -> ("(" ++ (show n) ++ ")", n1))  else pure n
   plus_ = liftsc2 (\x y -> "(" ++ x ++ " + " ++ y ++ ")")
@@ -103,36 +115,84 @@ instance Func SC where
 instance IfNZ SC where
   ifNonZero = liftsc3 (\x y z -> "if (not (" ++ x ++ ") == 0) then " ++ y ++ " else " ++ z)
 
-testersc f = fst $ s (f ()) 0
+instance Program SC where
+  type Prog SC a b = String
+  prog f = fst $ s (f (SC $ \n -> ("y",n))) 0
 
-test2 = (testersc fac ) == 
+testersc f = fst $ s f 0
+
+test2 = testersc fac == 
    "(\\y0 -> fix (\\y1 -> (\\y2 -> if (not (y2) == 0) then y2 * y1 (y2 + (-1)) else 1)) y0)" 
 
 -------------------------------------------------
--- Labelling of parts of the syntax
+-- CBN CPS Interpreter
+newtype CPS t = CPS (forall res. (t -> res) -> res)
+unCPS (CPS x) = x
 
-data Label = Root | InThen | InElse | InLam | InApp | InFix | InIf | IsVar
+instance Functor CPS where
+  fmap f (CPS t) = CPS $ \k -> t (k . f)
 
-data WrappedRepr repr a = WR {unWR :: repr a}
+instance MyApp CPS where
+  type Ctx CPS a = ()
+  pure a = CPS ($ a)
+  (CPS f) <*> (CPS a) = CPS $ \k -> f (\f' -> a (\a' -> k $ f' a'))
 
-data LS repr a = LS {l :: Label, unLS :: repr a}
+instance Expr CPS where
+  int_ = pure
+  plus_ = liftA2 (+)
+  times_ = liftA2 (*)
 
-instance Expr repr => Expr (WrappedRepr repr) where
-  int_ x = WR (int_ x)
-  plus_ (WR x) (WR y) = WR( plus_ x y)
-  times_ (WR x) (WR y) = WR( times_ x y)
+instance Func CPS where
+  lam f = pure f
+  app f x = CPS $ \k -> (unCPS f) (\f' -> unCPS (f' x) k)
+  fix = join $ (fmap <*> (return F.fix))
 
-instance Func repr => Func (LS repr) where
-  lam f = LS InLam (lam g)
-     where g x = unLS $ f (LS IsVar x)
-  app f x = LS InApp (app (unLS f) (unLS x))
-  fix f = LS InFix (fix g)
-     where g x = unLS $ f (LS IsVar x)
-      
-instance IfNZ repr => IfNZ (WrappedRepr repr) where
-  ifNonZero (WR b) (WR tb) (WR eb) = WR $ ifNonZero b tb eb
+instance IfNZ CPS where
+  ifNonZero = liftA3 (ifNZ)
 
--- This isn't right... InThen and InElse are not being used.
-instance IfNZ repr => IfNZ (LS repr) where
-  ifNonZero b tb eb = LS InIf (unWR $ ifNonZero (WR (unLS b)) (WR (unLS tb)) (WR (unLS eb)))
+instance Program CPS where
+  type Prog CPS a b = (a -> b)
+  prog f = \a -> (unCPS $ f (pure a)) id
 
+-------------------------------------------------
+-- Trace that we travel parts of the syntax
+
+newtype Trace repr a = TR ([Label] -> ([Label], repr a))
+unTR (TR x) = x
+
+pureTR x = TR $ \l -> (l,x)
+
+liftTR2 :: (repr a -> repr b -> repr c) -> Trace repr a -> Trace repr b -> Trace repr c
+liftTR2 f = \x y -> TR $ \l ->
+                 let (l',x') = unTR x l
+                     (l'',y') = unTR y l'
+                 in (l'', f x' y')
+
+instance (Expr repr) => Expr (Trace repr) where
+  int_ x = TR $ \_ -> ([],int_ x)
+  plus_ = liftTR2 (plus_)
+  times_ = liftTR2 (times_)
+
+{-
+instance (Func repr) => Func (Trace repr) where
+  lam f = TR $ \l ->
+            let h =  \x -> unTR (f (pureTR x)) l in
+            let g = snd . h in
+            ([InLam] ++ l, lam g)
+  app = liftTR2 app
+  fix f = TR $ \l ->
+            let g x = unTR (f (pureTR x)) l in
+            ([InFix] ++ l, Language.fix (snd . g))
+
+instance IfNZ repr => IfNZ (MW repr) where
+  ifNonZero (MW b) (MW tb) (MW eb) = MW $ 
+    do b' <- b
+       tb' <- tell [InThen] >> tb
+       eb' <- tell [InElse] >> eb
+       return $ ifNonZero b' tb' eb'
+
+testmw :: (() -> MW R a) -> (R a, [Label])
+testmw f = runWriter . unMW $ f ()
+test3 :: (R Int, [Label])
+test3 = runWriter $ unMW (app (fac ()) (int_ 4))
+-}
