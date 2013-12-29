@@ -271,7 +271,7 @@ object TestDirectCompiler extends DirectCompiler with ScalaLoader with Examples 
   def main(args: Array[String]): Unit = {
     println(fac)
     assert(fac ==
-"""prog { y0: Int => fix { y1: (Int=>Int) => lam { y2: Int => if (y2 != 0) y2 * y1(y2 + -1) else 1 } }(y0) }""")
+"""prog { y0: Int => fix { y1: (Int => Int) => lam { y2: Int => if (y2 != 0) y2 * y1(y2 + -1) else 1 } }(y0) }""")
 
     val f = load[Int,Int](fac)
     assert(f(4) == 24)
