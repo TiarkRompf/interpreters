@@ -316,6 +316,8 @@ trait CPSCompiler extends Syntax {
     s"y$name"
   }
 
+  def exit: String = "exit" // exit continuation
+
   // -----------
 
   def nat(c: Int) = s"$c"
@@ -358,7 +360,7 @@ trait CPSCompiler extends Syntax {
     val f1 = block(s"main", List(("ymain","V"),("kmain","K"))) {
       s"kmain(${ f("ymain") })"
     }
-    s"$f1(x,y => return y)"
+    s"$f1(x,$exit)"
   }
 
 }
@@ -450,6 +452,9 @@ trait CPSDefunCompiler extends CPSCompiler {
     env = List((s"y$name","V"))::env
     s"y$name"
   }
+  override def exit = {
+    s"xexit()"
+  }
 
 }
 
@@ -480,6 +485,7 @@ $body"""
 
   def main[A:Typ,B:Typ](body: => String) = 
 s"""def apply(x: ${typ[A]}): ${typ[B]} = {
+val exit = { (y:V) => return y }
 $body
 }"""
 
@@ -532,7 +538,7 @@ object TestCPSCompiler extends CPSCompiler with ScalaLoaderCPS with Examples {
     kmain(yapp)
   }
 }
-main0(x,y => return y); -1""")
+main0(x,exit); -1""")
 
 
     val f = load[Int,Int](code)
@@ -578,8 +584,7 @@ fclos(ffix1(ymain,kmain))(ymain,fapp0(ymain,kmain))
 def fapp0(ymain:V,kmain:K)(yapp: V) = {
 kmain(yapp)
 }
-main0()(x,y => return y); -1""")
-
+main0()(x,exit); -1""")
 
     val f = load[Int,Int](code)
     assert(f(4) == 24)
@@ -598,17 +603,25 @@ type K = V => R
 type F = ((V,K)) => R
 type KF = F => R
 
-def clos(f:F) = f
-def fclos(f:((F,KF))=>R): F = {
-  def f1(p:(V,K)): R = { val (x,k) = p; f((f1, f2 => f2(x,k))) }
-  f1
-}
 $body"""
 
   def decls(types: String, dispatch: String) = // XX make part of prog?
-    "abstract class Fun[T] extends (T=>Unit) { def apply(x:T) = call(this,x) }\n" +
+    "def clos(f:F) = f\n" +
+    "def fclos(f:((F,KF))=>R): F = xfix(f)\n" +
+    "abstract class Fun[T] extends (T=>Unit) with Product { \n" +
+    "override def toString = productPrefix + '(' + productIterator.mkString(\",\") + ')'\n" +
+    "def apply(x:T) = { println(\"call \"+this+\" -- \"+x); call(this,x) }}\n" +
+    "case class xexit() extends Fun[V]\n" +
+    "case class xfix(f:((F,KF))=>R) extends Fun[(V,K)]\n" +
+    "case class xpart(x:V,k:K) extends Fun[F]\n" +
     types + 
     "def call[T](f: Fun[T], x: T): Unit = (f,x) match {\n" +
+    "case (xexit(), y: V) =>\n" +
+    "exit(y)\n" +
+    "case (f1@xfix(f:(((F,KF))=>R)), (x:V,k:K)) =>\n" +
+    "f((f1,xpart(x,k)))\n" +
+    "case (xpart(x,k), (f:F)) =>\n" +
+    "f(x,k)\n" +
     dispatch + 
     "}\n"
 
@@ -621,7 +634,14 @@ $body"""
     println(code)
 
     assert(code ==
-"""abstract class Fun[T] extends (T=>Unit) { def apply(x:T) = call(this,x) }
+"""def clos(f:F) = f
+def fclos(f:((F,KF))=>R): F = xfix(f)
+abstract class Fun[T] extends (T=>Unit) with Product { 
+override def toString = productPrefix + '(' + productIterator.mkString(",") + ')'
+def apply(x:T) = { println("call "+this+" -- "+x); call(this,x) }}
+case class xexit() extends Fun[V]
+case class xfix(f:((F,KF))=>R) extends Fun[(V,K)]
+case class xpart(x:V,k:K) extends Fun[F]
 case class main0() extends Fun[(V,K)]
 case class ffix1(ymain:V,kmain:K) extends Fun[(F,KF)]
 case class flam2(ymain:V,kmain:K,yfix:F,kfix:KF) extends Fun[(V,K)]
@@ -631,6 +651,12 @@ case class felse3(ymain:V,kmain:K,yfix:F,kfix:KF,ylam:V,klam:K) extends Fun[(Uni
 case class fif2(ymain:V,kmain:K,yfix:F,kfix:KF,ylam:V,klam:K) extends Fun[V]
 case class fapp0(ymain:V,kmain:K) extends Fun[V]
 def call[T](f: Fun[T], x: T): Unit = (f,x) match {
+case (xexit(), y: V) =>
+exit(y)
+case (f1@xfix(f:(((F,KF))=>R)), (x:V,k:K)) =>
+f((f1,xpart(x,k)))
+case (xpart(x,k), (f:F)) =>
+f(x,k)
 case (fthen3(ymain:V,kmain:K,yfix:F,kfix:KF,ylam:V,klam:K), ()) =>
 val xp = ylam + -1
 yfix(xp,fapp3(ymain,kmain,yfix,kfix,ylam,klam))
@@ -650,7 +676,47 @@ fclos(ffix1(ymain,kmain))(ymain,fapp0(ymain,kmain))
 case (fapp0(ymain:V,kmain:K), yapp: V) =>
 kmain(yapp)
 }
-main0()(x,y => return y); -1""")
+main0()(x,xexit()); -1""")
+
+/*
+call main0() -- (4,xexit())
+call xfix(ffix1(4,xexit())) -- (4,fapp0(4,xexit()))
+call ffix1(4,xexit()) -- (xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())))
+call xpart(4,fapp0(4,xexit())) -- flam2(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())))
+call flam2(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit()))) -- (4,fapp0(4,xexit()))
+call fthen3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())) -- ()
+call xfix(ffix1(4,xexit())) -- (3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))
+call ffix1(4,xexit()) -- (xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))
+call xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))) -- flam2(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))
+call flam2(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))) -- (3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))
+call fthen3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))) -- ()
+call xfix(ffix1(4,xexit())) -- (2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))
+call ffix1(4,xexit()) -- (xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))))
+call xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))) -- flam2(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))))
+call flam2(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))) -- (2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))
+call fthen3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))) -- ()
+call xfix(ffix1(4,xexit())) -- (1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))))
+call ffix1(4,xexit()) -- (xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))))
+call xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))) -- flam2(4,xexit(),xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))))
+call flam2(4,xexit(),xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))))) -- (1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))))
+call fthen3(4,xexit(),xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))),1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))) -- ()
+call xfix(ffix1(4,xexit())) -- (0,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))),1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))))
+call ffix1(4,xexit()) -- (xfix(ffix1(4,xexit())),xpart(0,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))),1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))))))
+call xpart(0,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))),1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))))) -- flam2(4,xexit(),xfix(ffix1(4,xexit())),xpart(0,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))),1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))))))
+call flam2(4,xexit(),xfix(ffix1(4,xexit())),xpart(0,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))),1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))))) -- (0,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))),1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))))
+call felse3(4,xexit(),xfix(ffix1(4,xexit())),xpart(0,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))),1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))))),0,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))),1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))))) -- ()
+call fif2(4,xexit(),xfix(ffix1(4,xexit())),xpart(0,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))),1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))))),0,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))),1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))))) -- 1
+call fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))),1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))) -- 1
+call fif2(4,xexit(),xfix(ffix1(4,xexit())),xpart(1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))),1,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))))) -- 1
+call fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))) -- 1
+call fif2(4,xexit(),xfix(ffix1(4,xexit())),xpart(2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))),2,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())))) -- 2
+call fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))) -- 2
+call fif2(4,xexit(),xfix(ffix1(4,xexit())),xpart(3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))),3,fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit()))) -- 6
+call fapp3(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())) -- 6
+call fif2(4,xexit(),xfix(ffix1(4,xexit())),xpart(4,fapp0(4,xexit())),4,fapp0(4,xexit())) -- 24
+call fapp0(4,xexit()) -- 24
+call xexit() -- 24
+*/
 
     val f = load[Int,Int](code)
     assert(f(4) == 24)
