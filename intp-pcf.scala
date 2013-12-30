@@ -293,13 +293,13 @@ trait CPSCompiler extends Syntax {
   def emit(x: String) = buf = buf + ("  "*nest) + x + "\n"
 
   def envstr(e: List[(String,String)]) = 
-    (e map (p => p._1 + ":" + p._2) mkString ",", e map (p => p._1) mkString ",")
+    (e map (p => p._1 + ":" + p._2) mkString ",", e map (p => p._1) mkString ",", e map (p => p._2) mkString ",")
 
   def exp(x: String, y: String) = { emit(s"val $x = $y"); x }
 
   def block(name: String, args: List[(String,String)])(body: => String) = {
     val save = nest
-    val (mparm,margs) = envstr(args)
+    val (mparm,margs,mtps) = envstr(args)
     emit(s"def $name$nest($mparm) = {")
     nest += 1
     emit(body)
@@ -376,8 +376,8 @@ trait CPSLLCompiler extends CPSCompiler {
     val bsave = bbuf
     bbuf = ""
     val save = nest
-    val (eparm,eargs) = envstr(env.reverse.flatten)
-    val (mparm,margs) = envstr(args)
+    val (eparm,eargs,etps) = envstr(env.reverse.flatten)
+    val (mparm,margs,mtps) = envstr(args)
     emit(s"def $name$nest($eparm)($mparm) = {")
     nest += 1
     env = args::env
@@ -390,7 +390,7 @@ trait CPSLLCompiler extends CPSCompiler {
     s"$name$nest($eargs)"
   }
   override def contn(name: String)(body: String => String) = {
-    val (eparm,eargs) = envstr(env.reverse.flatten)
+    val (eparm,eargs,etps) = envstr(env.reverse.flatten)
     emit(body(s"f$name${nest-1}($eargs)"))
     nest -= 1
     env = env.tail
@@ -405,6 +405,53 @@ trait CPSLLCompiler extends CPSCompiler {
 
 }
 
+trait CPSDefunCompiler extends CPSCompiler {
+
+  // perform defunctionalization
+
+  var env: List[List[(String,String)]] = Nil
+
+  var dbuf = ""
+  def emitd(x: String) = dbuf = dbuf + x + "\n"
+
+  var bbuf = ""
+  override def emit(x: String) = bbuf = bbuf + x + "\n"
+
+  override def block(name: String, args: List[(String,String)])(body: => String) = {
+    val bsave = bbuf
+    bbuf = ""
+    val save = nest
+    val (eparm,eargs,etps) = envstr(env.reverse.flatten)
+    val (mparm,margs,mtps) = envstr(args)
+    val mtps1 = if (args.length == 0) "Unit" else mtps
+    emitd(s"case class $name$nest($eparm) extends Fun[($mtps1)]")
+    emit(s"case ($name$nest($eparm), ($mparm)) =>")
+    nest += 1
+    env = args::env
+    emit(body)
+    nest -= 1
+    env = env.tail
+    //emit("}")
+    buf = buf + bbuf
+    bbuf = bsave
+    s"$name$nest($eargs)"
+  }
+  override def contn(name: String)(body: String => String) = {
+    val (eparm,eargs,etps) = envstr(env.reverse.flatten)
+    emit(body(s"f$name${nest-1}($eargs)"))
+    nest -= 1
+    env = env.tail
+    //emit("}")
+    buf = buf + bbuf
+    bbuf = ""
+    emitd(s"case class f$name$nest($eparm) extends Fun[V]")
+    emit(s"case (f$name$nest($eparm), y$name: V) =>")
+    nest += 1
+    env = List((s"y$name","V"))::env
+    s"y$name"
+  }
+
+}
 
 
 
@@ -426,7 +473,7 @@ type KF = F => R
 
 def clos(f:F) = f
 def fclos(f:(F,KF)=>R): F = {
-  def f1(x:V,k:K):R = f(f1, f2 => f2(x,k))
+  def f1(x:V,k:K): R = f(f1, f2 => f2(x,k))
   f1
 }
 $body"""
@@ -540,6 +587,75 @@ main0()(x,y => return y); -1""")
 }
 
 
+object TestCPSDefunCompiler extends CPSDefunCompiler with ScalaLoaderCPS with Examples {
+
+  // tests
+  override def prelude(body: => String) = // XX: using tuples instead of multi-arg functions
+s"""
+type V = Int
+type R = Unit
+type K = V => R
+type F = ((V,K)) => R
+type KF = F => R
+
+def clos(f:F) = f
+def fclos(f:((F,KF))=>R): F = {
+  def f1(p:(V,K)): R = { val (x,k) = p; f((f1, f2 => f2(x,k))) }
+  f1
+}
+$body"""
+
+  def decls(types: String, dispatch: String) = // XX make part of prog?
+    "abstract class Fun[T] extends (T=>Unit) { def apply(x:T) = call(this,x) }\n" +
+    types + 
+    "def call[T](f: Fun[T], x: T): Unit = (f,x) match {\n" +
+    dispatch + 
+    "}\n"
+
+
+  def main(args: Array[String]): Unit = {
+
+    val res = fac
+    val code = decls(dbuf,buf) + res + "; -1"
+
+    println(code)
+
+    assert(code ==
+"""abstract class Fun[T] extends (T=>Unit) { def apply(x:T) = call(this,x) }
+case class main0() extends Fun[(V,K)]
+case class ffix1(ymain:V,kmain:K) extends Fun[(F,KF)]
+case class flam2(ymain:V,kmain:K,yfix:F,kfix:KF) extends Fun[(V,K)]
+case class fthen3(ymain:V,kmain:K,yfix:F,kfix:KF,ylam:V,klam:K) extends Fun[(Unit)]
+case class fapp3(ymain:V,kmain:K,yfix:F,kfix:KF,ylam:V,klam:K) extends Fun[V]
+case class felse3(ymain:V,kmain:K,yfix:F,kfix:KF,ylam:V,klam:K) extends Fun[(Unit)]
+case class fif2(ymain:V,kmain:K,yfix:F,kfix:KF,ylam:V,klam:K) extends Fun[V]
+case class fapp0(ymain:V,kmain:K) extends Fun[V]
+def call[T](f: Fun[T], x: T): Unit = (f,x) match {
+case (fthen3(ymain:V,kmain:K,yfix:F,kfix:KF,ylam:V,klam:K), ()) =>
+val xp = ylam + -1
+yfix(xp,fapp3(ymain,kmain,yfix,kfix,ylam,klam))
+case (fapp3(ymain:V,kmain:K,yfix:F,kfix:KF,ylam:V,klam:K), yapp: V) =>
+val xt = ylam * yapp
+fif2(ymain,kmain,yfix,kfix,ylam,klam)(xt)
+case (felse3(ymain:V,kmain:K,yfix:F,kfix:KF,ylam:V,klam:K), ()) =>
+fif2(ymain,kmain,yfix,kfix,ylam,klam)(1)
+case (flam2(ymain:V,kmain:K,yfix:F,kfix:KF), (ylam:V,klam:K)) =>
+if (ylam != 0) fthen3(ymain,kmain,yfix,kfix,ylam,klam)() else felse3(ymain,kmain,yfix,kfix,ylam,klam)()
+case (fif2(ymain:V,kmain:K,yfix:F,kfix:KF,ylam:V,klam:K), yif: V) =>
+klam(yif)
+case (ffix1(ymain:V,kmain:K), (yfix:F,kfix:KF)) =>
+kfix(clos(flam2(ymain,kmain,yfix,kfix)))
+case (main0(), (ymain:V,kmain:K)) =>
+fclos(ffix1(ymain,kmain))(ymain,fapp0(ymain,kmain))
+case (fapp0(ymain:V,kmain:K), yapp: V) =>
+kmain(yapp)
+}
+main0()(x,y => return y); -1""")
+
+    val f = load[Int,Int](code)
+    assert(f(4) == 24)
+  }
+}
 
 
 
