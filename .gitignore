@@ -4,3 +4,7 @@ interpreters.iml
 out/
 target/
 lib_managed/
+*.o
+*.hi
+*~
+*.swp
