@@ -1,5 +1,5 @@
 {-# LANGUAGE TypeFamilies, TypeSynonymInstances, 
-    FlexibleInstances, RankNTypes,
+    FlexibleInstances, RankNTypes, GADTs, ConstraintKinds,
       DeriveFunctor #-}
 module Interpreters where
 
@@ -24,21 +24,28 @@ instance Expr R where
   plus_ = liftA2 (+)
   times_ = liftA2 (*)
 
+instance ZigZag R where
+  demote f = unR . f . R
+
+pull :: (ZigZag rep, MyApp rep, Ctx rep (a->b)) => 
+    (rep a -> rep b) -> rep (a -> b)
+pull = pure . demote
+
 instance Func R where
-  lam f = pure f
-  app f x = (unR f) x
-  fix = join $ (fmap <*> (return F.fix))
+  lam = pure . demote
+  app = liftA2 ($)
+  fix = liftA1 F.fix . pull
 
 instance IfNZ R where
   ifNonZero = liftA3 (ifNZ)
 
 instance Program R where
   type Prog R a b = a -> b
-  prog f = unR . f . R
+  prog = demote
 
 -- uses Haskell's laziness
-tester :: R (R a ->  R b) -> (a -> b)
-tester = prog . unR
+tester :: R (a -> b) -> (a -> b)
+tester = unR
 
 -- and it works (will be translated to a unit test later)
 test1 = ((tester fac)(4) == 24 )
@@ -50,6 +57,8 @@ newtype SC a = SC {s :: Int -> (String, Int)}
 instance Functor SC where
   fmap _ (SC x) = SC x
 
+-- These are like liftA, liftA1 and liftA2, but not as polymorphic.
+-- Should make a class out of this setup, later.
 liftsc1 :: (String -> String) -> SC a -> SC a
 liftsc1 f x = SC (\n -> let (e1,n1) = s x n
                         in (f e1, n1) )
@@ -118,10 +127,11 @@ instance Expr CPS where
   plus_ = liftA2 (+)
   times_ = liftA2 (*)
 
-instance Func CPS where
-  lam f = pure f
-  app f x = CPS $ \k -> (unCPS f) (\f' -> unCPS (f' x) k)
-  fix = join $ (fmap <*> (return F.fix))
+instance HFunc CPS where
+  hlam f = pure f
+  -- the main difference in CBN is below:
+  happ f x = CPS $ \k -> (unCPS f) (\f' -> unCPS (f' x) k)
+  hfix = join $ (fmap <*> (return F.fix))
 
 instance IfNZ CPS where
   ifNonZero = liftA3 (ifNZ)
@@ -131,44 +141,60 @@ instance Program CPS where
   prog f = \a -> (unCPS $ f (pure a)) id
 
 -------------------------------------------------
--- Trace that we travel parts of the syntax
+-- AST Compiler
+--
+-- This uses a GADT; this is a nicer version of the Haskell code
+-- from the JFP paper
 
-newtype Trace repr a = TR ([Label] -> ([Label], repr a))
-unTR (TR x) = x
+data AST t where
+    Var :: Int -> AST t                -- variables identified by numbers
+    INT :: Int -> AST Int
+    Add :: AST Int -> AST Int -> AST Int
+    Mul :: AST Int -> AST Int -> AST Int
+    IfNZ :: AST Int -> AST t -> AST t -> AST t
+    Lam :: Int -> AST t2 -> AST (t1->t2)
+    App :: AST (t1->t2) -> AST t1  -> AST t2
+    Fix :: Int -> AST t -> AST t
+    LIFT :: t -> AST t                 -- lift values.  Needed for lam.
 
-pureTR x = TR $ \l -> (l,x)
+newtype C t = C (Int -> (AST t, Int))
 
-liftTR2 :: (repr a -> repr b -> repr c) -> Trace repr a -> Trace repr b -> Trace repr c
-liftTR2 f = \x y -> TR $ \l ->
-                 let (l',x') = unTR x l
-                     (l'',y') = unTR y l'
-                 in (l'', f x' y')
+-- Helper functors for the AST evaluator
+unC (C x) = x
 
-instance (Expr repr) => Expr (Trace repr) where
-  int_ x = TR $ \_ -> ([],int_ x)
-  plus_ = liftTR2 (plus_)
-  times_ = liftTR2 (times_)
+toC :: AST a -> C a
+toC x = C(\vc -> (x, vc))
 
-{-
-instance (Func repr) => Func (Trace repr) where
-  lam f = TR $ \l ->
-            let h =  \x -> unTR (f (pureTR x)) l in
-            let g = snd . h in
-            ([InLam] ++ l, lam g)
-  app = liftTR2 app
-  fix f = TR $ \l ->
-            let g x = unTR (f (pureTR x)) l in
-            ([InFix] ++ l, Language.fix (snd . g))
+oneC :: (AST a -> AST b) -> C a -> C b
+oneC f e1 = C(\vc -> let (e1b,vc1) = unC e1 vc
+                     in (f e1b ,vc1))
+twoC f e1 e2 = C(\vc -> let (e1b,vc1) = unC e1 vc
+                            (e2b,vc2) = unC e2 vc1
+                         in (f e1b e2b,vc2))
+threeC :: (AST a -> AST b -> AST c -> AST d) -> C a -> C b -> C c -> C d
+threeC f e1 e2 e3 = C(\vc -> let (e1b,vc1) = unC e1 vc
+                                 (e2b,vc2) = unC e2 vc1
+                                 (e3b,vc3) = unC e3 vc1
+                             in (f e1b e2b e3b, vc3))
 
-instance IfNZ repr => IfNZ (MW repr) where
-  ifNonZero (MW b) (MW tb) (MW eb) = MW $ 
-    do b' <- b
-       tb' <- tell [InThen] >> tb
-       eb' <- tell [InElse] >> eb
-       return $ ifNonZero b' tb' eb'
+instance Expr C where
+  int_   = toC . INT
+  plus_  = twoC Add
+  times_ = twoC Mul
 
-testmw :: (() -> MW R a) -> (R a, [Label])
-testmw f = runWriter . unMW $ f ()
-test3 :: (R Int, [Label])
-test3 = runWriter $ unMW (app (fac ()) (int_ 4))
--}
+instance Func C where
+   lam f = C(\vc -> let var = C(\vc2 -> (Var vc, vc2))
+                        (body, vc') = unC (f var) (succ vc)
+                   in (Lam vc body, vc'))
+   fix f = C(\vc -> let var = C(\vc2 -> (Var vc, vc2))
+                        (body, vc') = unC (f var) (succ vc)
+                   in (Fix vc body, vc'))
+   app = twoC App
+
+instance IfNZ C where
+  ifNonZero = threeC IfNZ
+
+instance Program C where
+  type Prog C a b = AST (a -> b)
+  prog f = fst (unC (lam f) 0)
+

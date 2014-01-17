@@ -10,10 +10,17 @@ class Expr val where
 class IfNZ rep where
   ifNonZero :: rep Int -> rep t -> rep t -> rep t 
 
+-- 'first order' representation of functions
 class Func rep where
-  lam :: (rep a -> rep b) -> rep (rep a -> rep b)
-  app :: rep (rep a -> rep b) -> (rep a -> rep b)
+  lam :: (rep a -> rep b) -> rep (a -> b)
+  app :: rep (a -> b) -> (rep a -> rep b)
   fix :: (rep a -> rep a) -> rep a
+  
+-- 'higher order' representation.  Useful for CPS
+class HFunc rep where
+  hlam :: (rep a -> rep b) -> rep (rep a -> rep b)
+  happ :: rep (rep a -> rep b) -> (rep a -> rep b)
+  hfix :: (rep a -> rep a) -> rep a
   
 -- a program is usually a special case of a lambda term
 class Program rep where

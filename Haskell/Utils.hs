@@ -6,6 +6,7 @@ import GHC.Exts
 -------------------------------------------------
 -- Some helpful definitions:
 -- a ternary, functional version of if-then-else
+ifNZ :: Int -> a -> a -> a
 ifNZ x tb eb = if (not (x == 0)) then tb else eb
 
 -- A version of Applicative parametrized by a constraint
@@ -16,6 +17,7 @@ class MyApp f where
   pure :: Ctx f a => a -> f a
   (<*>) :: f (a -> b) -> f a -> f b
 
+liftA1 f = \x -> pure f <*> x
 liftA2 f = \x y -> pure f <*> x <*> y
 liftA3 f = \x y z -> pure f <*> x <*> y <*> z
 
