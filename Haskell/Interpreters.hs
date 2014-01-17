@@ -52,6 +52,7 @@ test1 = ((tester fac)(4) == 24 )
 
 -------------------------------------------------
 -- String Compiler (needs some context)
+-- This is called the "Direct Compiler" in the scala code
 newtype SC a = SC {s :: Int -> (String, Int)}
 
 instance Functor SC where
@@ -174,8 +175,13 @@ twoC f e1 e2 = C(\vc -> let (e1b,vc1) = unC e1 vc
 threeC :: (AST a -> AST b -> AST c -> AST d) -> C a -> C b -> C c -> C d
 threeC f e1 e2 e3 = C(\vc -> let (e1b,vc1) = unC e1 vc
                                  (e2b,vc2) = unC e2 vc1
-                                 (e3b,vc3) = unC e3 vc1
+                                 (e3b,vc3) = unC e3 vc2
                              in (f e1b e2b e3b, vc3))
+
+bindC :: (Int -> AST a -> AST b) -> (C a1 -> C a) -> C b
+bindC func f = C(\vc -> let var = C(\vc2 -> (Var vc, vc2))
+                            (body, vc') = unC (f var) (succ vc)
+                        in (func vc body, vc'))
 
 instance Expr C where
   int_   = toC . INT
@@ -183,12 +189,8 @@ instance Expr C where
   times_ = twoC Mul
 
 instance Func C where
-   lam f = C(\vc -> let var = C(\vc2 -> (Var vc, vc2))
-                        (body, vc') = unC (f var) (succ vc)
-                   in (Lam vc body, vc'))
-   fix f = C(\vc -> let var = C(\vc2 -> (Var vc, vc2))
-                        (body, vc') = unC (f var) (succ vc)
-                   in (Fix vc body, vc'))
+   lam = bindC Lam
+   fix = bindC Fix
    app = twoC App
 
 instance IfNZ C where
