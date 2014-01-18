@@ -1,9 +1,10 @@
 {-# LANGUAGE TypeFamilies, TypeSynonymInstances, 
-    FlexibleInstances, RankNTypes, GADTs, ConstraintKinds,
+    FlexibleInstances, RankNTypes, GADTs,
       DeriveFunctor #-}
 module Interpreters where
 
 import Control.Monad
+import Control.Applicative
 import qualified Data.Function as F
 
 import Language
@@ -14,8 +15,7 @@ import Utils
 -- Direct interpreter
 newtype R a = R {unR :: a} deriving (Show, Functor)
 
-instance MyApp R where
-  type Ctx R a = ()
+instance Applicative R where
   pure = R
   f <*> x = R $ (unR f) (unR x)
 
@@ -27,14 +27,13 @@ instance Expr R where
 instance ZigZag R where
   demote f = unR . f . R
 
-pull :: (ZigZag rep, MyApp rep, Ctx rep (a->b)) => 
-    (rep a -> rep b) -> rep (a -> b)
+pull :: (ZigZag rep, Applicative rep) => (rep a -> rep b) -> rep (a -> b)
 pull = pure . demote
 
 instance Func R where
   lam = pure . demote
   app = liftA2 ($)
-  fix = liftA1 F.fix . pull
+  fix = fmap F.fix . pull
 
 instance IfNZ R where
   ifNonZero = liftA3 (ifNZ)
@@ -75,15 +74,8 @@ liftsc3 f x y z = SC (\n -> let (e1,n1) = s x n
                                 (e3,n3) = s z n2
                             in (f e1 e2 e3, n3) )
 
-instance MyApp SC where
-  type Ctx SC a = Show a
-  pure x = SC $ \n -> (show x, n)
-  f <*> x = SC (\n -> let (f1, n1) = s f n
-                          (x1, n2) = s x n1
-                      in (f1 ++ " " ++ x1, n2))
-
 instance Expr SC where
-  int_ = \n -> if n < 0 then SC (\n1 -> ("(" ++ (show n) ++ ")", n1))  else pure n
+  int_ = \n -> if n < 0 then SC (\n1 -> ("(" ++ (show n) ++ ")", n1))  else SC $ (\c -> (show n, c))
   plus_ = liftsc2 (\x y -> "(" ++ x ++ " + " ++ y ++ ")")
   times_ = liftsc2 (\x y -> x ++ " * " ++ y)
 
@@ -118,8 +110,7 @@ unCPS (CPS x) = x
 instance Functor CPS where
   fmap f (CPS t) = CPS $ \k -> t (k . f)
 
-instance MyApp CPS where
-  type Ctx CPS a = ()
+instance Applicative CPS where
   pure a = CPS ($ a)
   (CPS f) <*> (CPS a) = CPS $ \k -> f (\f' -> a (\a' -> k $ f' a'))
 
@@ -200,3 +191,39 @@ instance Program C where
   type Prog C a b = AST (a -> b)
   prog f = fst (unC (lam f) 0)
 
+
+-------------------------------------------------
+-- CPS Transformer 1
+--
+-- Rather than hand-merging a compiler and CPS tranformation (like 
+-- CPSCompiler in the Scala code), let's be modular about this.
+-- In this case, we keep to the language without let.
+--
+-- Although we can write this 'by hand', without going through
+-- the Applicative, this is tedious.  So, here, we'll 
+-- restrict to that case.  Unfortunately, neither SC nor AST are
+-- Applicative, so there will be tedium in our future
+data CPSR repr a = CPSR {unCPSR :: forall res. repr ((a -> res) -> res)}
+
+instance (Func repr, Applicative repr) => Functor (CPSR repr) where
+  fmap f (CPSR x) = CPSR (lam $ \k -> app x (lam $ \v -> app k (app (pure f) v)))
+
+instance (Applicative repr, Func repr) => Applicative (CPSR repr) where
+  pure i = CPSR $ lam (\k -> app k (pure i))
+  (CPSR f) <*> (CPSR a) = 
+    CPSR $ lam (\k -> app f (lam (\f' -> app a (lam (\a' -> app k (app f' a'))))))
+ 
+-- even more general version of liftA
+liftMA1 :: (Func r) => (r a -> r b) -> CPSR r a -> CPSR r b
+liftMA1 f = \(CPSR x) -> CPSR $ lam (\k ->
+  app x (lam (\v1 -> app k (f v1))))
+
+liftMA2 :: (Func r) => (r a -> r b -> r c) -> CPSR r a -> CPSR r b -> CPSR r c
+liftMA2 f = \(CPSR x) (CPSR y) -> CPSR $ lam (\k ->
+  app x (lam (\v1 ->
+  app y (lam (\v2 -> app k (f v1 v2))))))
+
+instance (Expr rep, Func rep, Applicative rep) => Expr (CPSR rep) where
+  int_ i = pure i -- CPSR $ lam (\k -> app k (int_ i))
+  plus_  = liftMA2 plus_
+  times_ = liftMA2 times_
