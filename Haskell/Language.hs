@@ -22,6 +22,18 @@ class HFunc rep where
   happ :: rep (rep a -> rep b) -> (rep a -> rep b)
   hfix :: (rep a -> rep a) -> rep a
   
+-- but a Func can be made an HFunc:
+data I rep a = I {unI :: rep a}
+
+class ZigZag rep where
+  demote :: (rep a -> rep b) -> (a -> b)
+
+{-
+instance Func rep => HFunc (I rep) where
+  -- hlam f = I (lam (unI . f . I))
+  happ (I f) (I x) = I $ app f x
+-}
+
 -- a program is usually a special case of a lambda term
 class Program rep where
   type Prog rep a b 

@@ -210,8 +210,9 @@ instance (Func repr, Applicative repr) => Functor (CPSR repr) where
 
 instance (Applicative repr, Func repr) => Applicative (CPSR repr) where
   pure i = CPSR $ lam (\k -> app k (pure i))
-  (CPSR f) <*> (CPSR a) = 
-    CPSR $ lam (\k -> app f (lam (\f' -> app a (lam (\a' -> app k (app f' a'))))))
+  (CPSR f) <*> (CPSR a) = CPSR $ lam (\k -> 
+    app f (lam (\f' -> 
+    app a (lam (\a' -> app k (app f' a'))))))
  
 -- even more general version of liftA
 liftMA1 :: (Func r) => (r a -> r b) -> CPSR r a -> CPSR r b
@@ -227,3 +228,18 @@ instance (Expr rep, Func rep, Applicative rep) => Expr (CPSR rep) where
   int_ i = pure i -- CPSR $ lam (\k -> app k (int_ i))
   plus_  = liftMA2 plus_
   times_ = liftMA2 times_
+
+-- instance (Func rep) => Func (CPSR rep) where
+--  app = liftMA2 app
+
+--  happ :: CPSR rep (CPSR rep a -> CPSR rep b) -> CPSR rep a -> CPSR rep b
+instance (Func rep, Applicative rep) => HFunc (CPSR rep) where
+  hlam f = pure f
+--   happ (CPSR f) (CPSR x) = CPSR $ lam (\k -> app k (app f x))
+  -- happ f x = CPS $ \k -> (unCPS f) (\f' -> unCPS (f' x) k)
+{-
+  happ (CPSR f) (CPSR x) = CPSR $ lam (\k -> app f (lam (\f' -> 
+                  app x (lam (\v ->
+                  app (unCPSR (app f' v)) k))))) -}
+
+myapp (CPSR f) (CPSR x) = CPSR $ lam (\k -> app k (app f x))
