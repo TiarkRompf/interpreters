@@ -1,0 +1,16 @@
+Questions
+=========
+
+1) is result generated here = abstract machine specialized to program (--> Futamura)
+
+2) compositionality of defunctionalization?
+
+3) What is a generic "semantic interface" in the case of an obtained in (1) small-step abstract machine.
+
+4) What is a cheap implementation for context-sensitivity (call strings - do we have them already?).
+
+5) Okay, we've got some flows-to information. How to use it for program transformation?
+
+----
+
+- relation to nano-pass compilers? shared goal: separation of concerns, modularity
